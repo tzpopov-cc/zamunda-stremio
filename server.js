@@ -593,8 +593,8 @@ function configPageHTML() {
                 <div class="card-title">
                     Real-Debrid <span class="badge badge-premium" data-bg="Премиум" data-en="Premium"></span>
                 </div>
-                <div class="card-desc" data-bg="Моментално пускане без буфериране. Показва само torrents с гарантиран playback. Изисква Real-Debrid абонамент (~3\u20AC/месец)."
-                     data-en="Instant playback, zero buffering. Only shows torrents with guaranteed playback. Requires Real-Debrid subscription (~3\u20AC/month)."></div>
+                <div class="card-desc" data-bg="Моментално пускане без буфериране. Показва само torrents с гарантиран playback. Изисква Real-Debrid абонамент (~3\u20AC/месец). Списъкът се зарежда по-бавно (~10-15 сек), защото проверява кои торенти са кеширани."
+                     data-en="Instant playback, zero buffering. Only shows torrents with guaranteed playback. Requires Real-Debrid subscription (~3\u20AC/month). Stream list loads slower (~10-15 sec) as it checks which torrents are cached."></div>
             </label>
         </div>
         <div class="token-row" id="tokenRow">
@@ -684,6 +684,10 @@ function configPageHTML() {
             </button>
         </div>
         <div id="manifestUrl"></div>
+        <div style="margin-top:16px; padding:12px 16px; background:rgba(245,208,32,0.06); border:1px solid rgba(245,208,32,0.15); border-radius:8px; font-size:12px; line-height:1.6; color:#999;">
+            <span data-bg="⏱ Addon-ът е на безплатен сървър, който заспива след 15 мин. неактивност. Първото търсене след пауза отнема ~30 сек. за събуждане, след което работи нормално."
+                  data-en="⏱ This addon runs on a free server that sleeps after 15 min. of inactivity. The first search after a pause takes ~30 sec. to wake up, then works normally."></span>
+        </div>
     </div>
 
     <div class="footer">
