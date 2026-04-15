@@ -26,15 +26,26 @@ function setCached(key, data) {
 }
 
 // =====================================================
-// STATS
+// STATS — persisted in Upstash Redis
 // =====================================================
-const stats = {
-    startedAt: new Date().toISOString(),
-    configPage: 0,
-    installs: 0,        // manifest.json hits
-    streams: 0,         // stream requests
-    uniqueUsers: new Set(), // unique RD tokens / IPs
-};
+const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || '';
+const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
+
+async function redisCmd(...args) {
+    if (!UPSTASH_URL) return null;
+    try {
+        const res = await axios.post(`${UPSTASH_URL}`, args, {
+            headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
+            timeout: 3000
+        });
+        return res.data?.result;
+    } catch (e) { return null; }
+}
+
+async function incr(key) { return redisCmd('INCR', `zamunda:${key}`); }
+async function sadd(key, val) { return redisCmd('SADD', `zamunda:${key}`, val); }
+async function scard(key) { return redisCmd('SCARD', `zamunda:${key}`); }
+async function getCount(key) { return (await redisCmd('GET', `zamunda:${key}`)) || 0; }
 
 // =====================================================
 // CONFIG PARSING — config lives in URL path
@@ -818,18 +829,18 @@ setLang('bg');
 // Track unique user from IP or RD token
 function trackUser(req, config) {
     const id = config?.rdtoken ? config.rdtoken.substring(0, 8) : (req.ip || req.headers['x-forwarded-for'] || 'unknown');
-    stats.uniqueUsers.add(id);
+    sadd('users', id);
 }
 
 // Config page
-app.get('/', (req, res) => { stats.configPage++; res.type('html').send(configPageHTML()); });
+app.get('/', (req, res) => { incr('configPage'); res.type('html').send(configPageHTML()); });
 app.get('/configure', (req, res) => res.redirect('/'));
 app.get('/:config/configure', (req, res) => res.redirect('/'));
 
 // Manifest
-app.get('/manifest.json', (req, res) => { stats.installs++; res.json(buildManifest(DEFAULTS)); });
+app.get('/manifest.json', (req, res) => { incr('installs'); res.json(buildManifest(DEFAULTS)); });
 app.get('/:config/manifest.json', (req, res) => {
-    stats.installs++;
+    incr('installs');
     const config = parseConfig(decodeURIComponent(req.params.config));
     trackUser(req, config);
     res.json(buildManifest(config));
@@ -837,7 +848,7 @@ app.get('/:config/manifest.json', (req, res) => {
 
 // Streams
 app.get('/:config/stream/:type/:id.json', async (req, res) => {
-    stats.streams++;
+    incr('streams');
     try {
         const config = parseConfig(decodeURIComponent(req.params.config));
         trackUser(req, config);
@@ -861,17 +872,19 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
 });
 
 // Stats
-app.get('/stats', (req, res) => {
-    const uptime = Math.floor((Date.now() - new Date(stats.startedAt).getTime()) / 1000);
-    const hours = Math.floor(uptime / 3600);
-    const mins = Math.floor((uptime % 3600) / 60);
+app.get('/stats', async (req, res) => {
+    const [configPage, installs, streams, users] = await Promise.all([
+        getCount('configPage'),
+        getCount('installs'),
+        getCount('streams'),
+        scard('users'),
+    ]);
     res.json({
-        startedAt: stats.startedAt,
-        uptime: `${hours}h ${mins}m`,
-        configPageViews: stats.configPage,
-        installs: stats.installs,
-        streamRequests: stats.streams,
-        uniqueUsers: stats.uniqueUsers.size,
+        configPageViews: Number(configPage),
+        installs: Number(installs),
+        streamRequests: Number(streams),
+        uniqueUsers: Number(users || 0),
+        persistent: !!UPSTASH_URL,
     });
 });
 
