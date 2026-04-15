@@ -26,6 +26,17 @@ function setCached(key, data) {
 }
 
 // =====================================================
+// STATS
+// =====================================================
+const stats = {
+    startedAt: new Date().toISOString(),
+    configPage: 0,
+    installs: 0,        // manifest.json hits
+    streams: 0,         // stream requests
+    uniqueUsers: new Set(), // unique RD tokens / IPs
+};
+
+// =====================================================
 // CONFIG PARSING — config lives in URL path
 // Format: key=value|key=value (like Torrentio)
 // =====================================================
@@ -796,22 +807,32 @@ setLang('bg');
 // EXPRESS ROUTES
 // =====================================================
 
+// Track unique user from IP or RD token
+function trackUser(req, config) {
+    const id = config?.rdtoken ? config.rdtoken.substring(0, 8) : (req.ip || req.headers['x-forwarded-for'] || 'unknown');
+    stats.uniqueUsers.add(id);
+}
+
 // Config page
-app.get('/', (req, res) => res.type('html').send(configPageHTML()));
+app.get('/', (req, res) => { stats.configPage++; res.type('html').send(configPageHTML()); });
 app.get('/configure', (req, res) => res.redirect('/'));
 app.get('/:config/configure', (req, res) => res.redirect('/'));
 
 // Manifest
-app.get('/manifest.json', (req, res) => res.json(buildManifest(DEFAULTS)));
+app.get('/manifest.json', (req, res) => { stats.installs++; res.json(buildManifest(DEFAULTS)); });
 app.get('/:config/manifest.json', (req, res) => {
+    stats.installs++;
     const config = parseConfig(decodeURIComponent(req.params.config));
+    trackUser(req, config);
     res.json(buildManifest(config));
 });
 
 // Streams
 app.get('/:config/stream/:type/:id.json', async (req, res) => {
+    stats.streams++;
     try {
         const config = parseConfig(decodeURIComponent(req.params.config));
+        trackUser(req, config);
         const { type, id } = req.params;
         if (!['movie', 'series'].includes(type)) return res.json({ streams: [] });
 
@@ -829,6 +850,21 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         console.error('Stream handler error:', e);
         res.json({ streams: [] });
     }
+});
+
+// Stats
+app.get('/stats', (req, res) => {
+    const uptime = Math.floor((Date.now() - new Date(stats.startedAt).getTime()) / 1000);
+    const hours = Math.floor(uptime / 3600);
+    const mins = Math.floor((uptime % 3600) / 60);
+    res.json({
+        startedAt: stats.startedAt,
+        uptime: `${hours}h ${mins}m`,
+        configPageViews: stats.configPage,
+        installs: stats.installs,
+        streamRequests: stats.streams,
+        uniqueUsers: stats.uniqueUsers.size,
+    });
 });
 
 // Health
