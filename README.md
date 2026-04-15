@@ -14,7 +14,7 @@ Stremio addon that searches the [zamunda.rip](https://zamunda.rip) archive (Zamu
 
 Visit the config page, choose your settings, and click "Install in Stremio":
 
-**https://your-deployment-url.onrender.com**
+**https://zamunda-stremio-qd0j.onrender.com**
 
 ## Self-host
 
