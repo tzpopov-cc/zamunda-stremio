@@ -1,0 +1,19 @@
+{
+  "name": "zamunda-bg-stremio",
+  "version": "1.0.0",
+  "description": "Stremio addon for Bulgarian audio movies and series from Zamunda.RIP archive",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": ["stremio", "addon", "bulgarian", "zamunda", "real-debrid"],
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.0",
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
+  }
+}
