@@ -213,31 +213,32 @@ function matchesEpisode(title, season, episode) {
         new RegExp(`SEASON[\\s._]*${sInt}[\\s._]*EPISODE[\\s._]*${eInt}\\b`),
     ].some(p => p.test(t))) return 'episode';
 
-    // 2. Anime absolute episode: "- 02", "- 2", "EP 02", "EP02", "E02" (no season prefix)
+    // 2. Anime absolute episode: "- 137", "- 07 [720p]", "EP02" (no season prefix)
     if (sInt === 1) {
         const absPatterns = [
-            new RegExp(`[\\s._-]+${e}\\s*[\\[\\(]`),           // "- 02 [720p]"
-            new RegExp(`[\\s._-]+${e}\\s*$`),                   // "- 02" at end
-            new RegExp(`[\\s._-]+${eInt}\\s*[\\[\\(]`),         // "- 2 [720p]"
-            new RegExp(`[\\s._-]+${eInt}\\s*$`),                 // "- 2" at end
-            new RegExp(`EP[\\s._]*${e}\\b`),                     // "EP02", "EP 02"
-            new RegExp(`\\bE${e}\\b(?!.*S\\d)`),                 // "E02" without S prefix
+            new RegExp(`[\\s._-]+0*${eInt}\\s*[\\[\\(.]`),      // "- 137 [720p]" or "- 07 [480p]"
+            new RegExp(`[\\s._-]+0*${eInt}\\s*$`),               // "- 137" at end
+            new RegExp(`[\\s._-]+0*${eInt}\\.\\w{2,4}$`),        // "- 01.mp4" at end
+            new RegExp(`EP[\\s._]*0*${eInt}\\b`),                // "EP02", "EP 137"
+            new RegExp(`\\bE0*${eInt}\\b(?!.*S\\d)`),            // "E02" without S prefix
         ];
         if (absPatterns.some(p => p.test(t))) return 'episode';
     }
 
-    // 3. Multi-episode range: S01E01-03, "- 01-12", "13-16"
+    // 3. Episode range: S01E01-03, "1_-_293", "101-114", "01 ~ 100"
+    // Flexible: handles _-_, spaces, ~, plain dash as separators
     const rangePatterns = [
-        new RegExp(`S${s}E(\\d+)[-–](\\d+)`),                    // S01E01-03
-        new RegExp(`[\\s._-]+(\\d+)[-–](\\d+)\\s*[\\[\\(]`),     // "- 01-12 [720p]"
-        new RegExp(`[\\s._-]+(\\d+)[-–](\\d+)\\s*$`),             // "01-12" at end
+        new RegExp(`S${s}E(\\d+)\\s*[-–]\\s*(\\d+)`),                   // S01E01-03
+        /(\d+)\s*[-–_~]+\s*(\d+)\s*[\[\(]/,                             // "101-114 [720p]"
+        /(\d+)\s*[-–_~]+\s*(\d+)\s*$/,                                  // "1-293" at end
+        /[_\s.-]+(\d+)\s*[_\s]*[-–~]+\s*[_\s]*(\d+)(?:\s*[\[\(]|\s*$|[_\s]+)/,  // "1_-_293", "01 ~ 100"
     ];
     for (const p of rangePatterns) {
         const m = t.match(p);
         if (m) {
             const from = parseInt(m[1]);
             const to = parseInt(m[2]);
-            if (eInt >= from && eInt <= to) return 'episode';
+            if (from < to && eInt >= from && eInt <= to) return 'episode';
         }
     }
 
