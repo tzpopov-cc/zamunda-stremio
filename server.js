@@ -48,6 +48,16 @@ async function sadd(key, val) { return redisCmd('SADD', `zamunda:${key}`, val); 
 async function scard(key) { return redisCmd('SCARD', `zamunda:${key}`); }
 async function getCount(key) { return (await redisCmd('GET', `zamunda:${key}`)) || 0; }
 
+// Recent logs — store last 100 events in a Redis list
+async function logEvent(type, msg) {
+    const entry = `${new Date().toISOString().substring(0,19)} [${type}] ${msg}`;
+    await redisCmd('LPUSH', 'zamunda:logs', entry);
+    await redisCmd('LTRIM', 'zamunda:logs', '0', '199'); // keep last 200
+}
+async function getLogs(count = 50) {
+    return (await redisCmd('LRANGE', 'zamunda:logs', '0', String(count - 1))) || [];
+}
+
 // =====================================================
 // CONFIG PARSING — config lives in URL path
 // Format: key=value|key=value (like Torrentio)
@@ -305,6 +315,7 @@ async function tbCheckCached(infohashes, tbToken) {
         return new Map();
     } catch (e) {
         console.error('TorBox cache check error:', e.response?.data?.detail || e.message);
+        logEvent('ERROR', `TB cache check: ${e.response?.data?.detail || e.message}`);
         return new Map();
     }
 }
@@ -353,6 +364,7 @@ async function tbResolve(magnet, infohash, tbToken, season, episode) {
         return dlRes.data?.data || null; // data is the download URL string
     } catch (e) {
         console.error('TorBox resolve error:', e.response?.data?.detail || e.message);
+        logEvent('ERROR', `TB resolve: ${e.response?.data?.detail || e.message}`);
         return null;
     }
 }
@@ -417,6 +429,7 @@ async function resolveStreams(type, fullId, config) {
     if (!meta) return [];
 
     console.log(`\n🔍 ${type} "${meta.name}"${season ? ` S${season}E${episode}` : ''} [${config.debrid}|${config.content}]`);
+    logEvent('SEARCH', `${type} "${meta.name}"${season ? ` S${season}E${episode}` : ''} [${config.debrid}|${config.content}]`);
 
     // Build search queries — for series, search with season/episode patterns too
     // because zamunda API returns max 20 results per query
@@ -493,10 +506,12 @@ async function resolveStreams(type, fullId, config) {
                 .filter(t => !resolvedHashes.has(t._infohash))
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${tbStreams.length} TB + ${p2pStreams.length} P2P in ${elapsed}s`);
+            logEvent('TB', `${tbStreams.length} TB + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
             return [...tbStreams, ...p2pStreams];
         }
 
         console.log(`  → ${tbStreams.length} playable in ${elapsed}s`);
+        logEvent('TB', `${tbStreams.length} playable in ${elapsed}s — "${meta.name}"`);
         return tbStreams;
     }
 
@@ -520,15 +535,18 @@ async function resolveStreams(type, fullId, config) {
                 .filter(t => !resolvedHashes.has(t._infohash))
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s`);
+            logEvent('RD', `${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
             return [...rdStreams, ...p2pStreams];
         }
 
         console.log(`  → ${rdStreams.length} playable in ${elapsed}s`);
+        logEvent('RD', `${rdStreams.length} playable in ${elapsed}s — "${meta.name}"`);
         return rdStreams;
     }
 
     // ---- P2P MODE ----
     console.log(`  P2P mode: returning ${filtered.length} streams`);
+    logEvent('P2P', `${filtered.length} streams — "${meta.name}"`);
     return filtered.map(torrent => buildStream(torrent, null, 'p2p'));
 }
 
@@ -1002,6 +1020,7 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         res.json({ streams });
     } catch (e) {
         console.error('Stream handler error:', e);
+        logEvent('ERROR', `Stream handler: ${e.message}`);
         res.json({ streams: [] });
     }
 });
@@ -1021,6 +1040,14 @@ app.get('/stats', async (req, res) => {
         uniqueUsers: Number(users || 0),
         persistent: !!UPSTASH_URL,
     });
+});
+
+// Logs — last 50 events (searches, results, errors)
+app.get('/logs', async (req, res) => {
+    const count = Math.min(parseInt(req.query.n) || 50, 200);
+    const logs = await getLogs(count);
+    const errors = logs.filter(l => l.includes('[ERROR]'));
+    res.json({ total: logs.length, errors: errors.length, logs });
 });
 
 // Health
