@@ -12,6 +12,7 @@ const PORT = process.env.PORT || 7000;
 const ZAMUNDA_API = 'https://zamunda.rip/api/torrents';
 const CINEMETA_API = 'https://v3-cinemeta.strem.io/meta';
 const RD_API = 'https://api.real-debrid.com/rest/1.0';
+const TB_API = 'https://api.torbox.app/v1';
 
 const cache = new Map();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
@@ -52,9 +53,10 @@ async function getCount(key) { return (await redisCmd('GET', `zamunda:${key}`)) 
 // Format: key=value|key=value (like Torrentio)
 // =====================================================
 const DEFAULTS = {
-    debrid: 'none',
-    rdtoken: '',
-    rdmode: 'guaranteed',   // guaranteed | all (guaranteed + P2P fallback)
+    debrid: 'none',         // none | realdebrid | torbox
+    rdtoken: '',            // Real-Debrid token
+    tbtoken: '',            // TorBox token
+    debridmode: 'guaranteed', // guaranteed | all (guaranteed + P2P fallback)
     content: 'bgaudio',    // bgaudio | all
     quality: '4k,1080p,720p,sd',
     sort: 'quality',        // quality | size
@@ -81,8 +83,7 @@ function configFingerprint(config) {
 // MANIFEST — dynamic based on config
 // =====================================================
 function buildManifest(config) {
-    const hasRD = config.debrid === 'realdebrid' && config.rdtoken;
-    const mode = hasRD ? 'RD' : 'P2P';
+    const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
         version: '2.0.0',
@@ -289,6 +290,74 @@ async function checkAndResolve(magnet, rdToken, season, episode) {
 }
 
 // =====================================================
+// TORBOX
+// =====================================================
+async function tbCheckCached(infohashes, tbToken) {
+    try {
+        const res = await axios.post(
+            `${TB_API}/api/torrents/checkcached?format=list&list_files=true`,
+            { hashes: infohashes },
+            { headers: { Authorization: `Bearer ${tbToken}` }, timeout: 10000 }
+        );
+        if (res.data?.success) {
+            return new Map((res.data.data || []).map(r => [r.hash, r]));
+        }
+        return new Map();
+    } catch (e) {
+        console.error('TorBox cache check error:', e.response?.data?.detail || e.message);
+        return new Map();
+    }
+}
+
+async function tbResolve(magnet, infohash, tbToken, season, episode) {
+    const headers = { Authorization: `Bearer ${tbToken}` };
+    try {
+        // Create torrent (if cached, returns instantly)
+        const createRes = await axios.post(`${TB_API}/api/torrents/createtorrent`,
+            new URLSearchParams({ magnet, allow_zip: 'false' }),
+            { headers, timeout: 15000 });
+
+        if (!createRes.data?.success) return null;
+        const torrentId = createRes.data.data?.torrent_id;
+        if (!torrentId) return null;
+
+        // Get torrent info
+        const infoRes = await axios.get(`${TB_API}/api/torrents/mylist`, {
+            params: { id: torrentId, bypass_cache: true },
+            headers, timeout: 10000
+        });
+
+        const torrent = infoRes.data?.data;
+        if (!torrent?.download_present) return null;
+
+        // Find video file
+        const videoFiles = (torrent.files || [])
+            .filter(f => /\.(mkv|mp4|avi|mov|m4v|ts|webm|vob)$/i.test(f.short_name));
+        if (videoFiles.length === 0) return null;
+
+        let target;
+        if (season && episode && videoFiles.length > 1) {
+            const s = String(season).padStart(2, '0');
+            const e = String(episode).padStart(2, '0');
+            const epPattern = new RegExp(`S${s}E${e}|${parseInt(season)}x${e}|E${e}[^0-9]`, 'i');
+            target = videoFiles.find(f => epPattern.test(f.name || f.short_name));
+        }
+        if (!target) target = videoFiles.sort((a, b) => b.size - a.size)[0];
+
+        // Get download link
+        const dlRes = await axios.get(`${TB_API}/api/torrents/requestdl`, {
+            params: { token: tbToken, torrent_id: torrentId, file_id: target.id },
+            headers, timeout: 10000
+        });
+
+        return dlRes.data?.data || null; // data is the download URL string
+    } catch (e) {
+        console.error('TorBox resolve error:', e.response?.data?.detail || e.message);
+        return null;
+    }
+}
+
+// =====================================================
 // FILTERS
 // =====================================================
 function applyFilters(torrents, config, type) {
@@ -396,10 +465,44 @@ async function resolveStreams(type, fullId, config) {
     filtered = sortTorrents(filtered, config);
 
     const hasRD = config.debrid === 'realdebrid' && config.rdtoken;
+    const hasTB = config.debrid === 'torbox' && config.tbtoken;
+    const debridMode = config.debridmode || config.rdmode || 'guaranteed'; // backward compat
+
+    // ---- TORBOX MODE ----
+    if (hasTB) {
+        console.log(`  TorBox mode (${debridMode}): checking ${filtered.length} torrents...`);
+        const startTime = Date.now();
+        const infohashes = filtered.map(t => t._infohash);
+        const cached = await tbCheckCached(infohashes, config.tbtoken);
+        const cachedTorrents = filtered.filter(t => cached.has(t._infohash));
+        console.log(`  ${cachedTorrents.length} cached on TorBox`);
+
+        // Resolve cached torrents — TorBox is fast, can do more concurrency
+        const tasks = cachedTorrents.map(torrent => async () => {
+            const url = await tbResolve(torrent.link, torrent._infohash, config.tbtoken, season, episode);
+            if (url) console.log(`  ✅ ${torrent._quality.tag} ${torrent.title.substring(0, 50)}`);
+            return { torrent, url };
+        });
+        const results = await parallelLimit(tasks, 3);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const tbStreams = results.filter(r => r.url).map(({ torrent, url }) => buildStream(torrent, url, 'tb'));
+
+        if (debridMode === 'all') {
+            const resolvedHashes = new Set(results.filter(r => r.url).map(r => r.torrent._infohash));
+            const p2pStreams = filtered
+                .filter(t => !resolvedHashes.has(t._infohash))
+                .map(t => buildStream(t, null, 'p2p'));
+            console.log(`  → ${tbStreams.length} TB + ${p2pStreams.length} P2P in ${elapsed}s`);
+            return [...tbStreams, ...p2pStreams];
+        }
+
+        console.log(`  → ${tbStreams.length} playable in ${elapsed}s`);
+        return tbStreams;
+    }
 
     // ---- RD MODE ----
     if (hasRD) {
-        console.log(`  RD mode (${config.rdmode}): checking ${filtered.length} torrents...`);
+        console.log(`  RD mode (${debridMode}): checking ${filtered.length} torrents...`);
         const startTime = Date.now();
         const tasks = filtered.map((torrent, idx) => async () => {
             const url = await checkAndResolve(torrent.link, config.rdtoken, season, episode);
@@ -411,14 +514,12 @@ async function resolveStreams(type, fullId, config) {
 
         const rdStreams = results.filter(r => r.url).map(({ torrent, url }) => buildStream(torrent, url, 'rd'));
 
-        if (config.rdmode === 'all') {
-            // Add remaining torrents as P2P fallback (not resolved by RD)
+        if (debridMode === 'all') {
             const resolvedHashes = new Set(results.filter(r => r.url).map(r => r.torrent._infohash));
             const p2pStreams = filtered
                 .filter(t => !resolvedHashes.has(t._infohash))
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s`);
-
             return [...rdStreams, ...p2pStreams];
         }
 
@@ -441,8 +542,7 @@ function buildStream(torrent, url, mode) {
 
     // NAME field (left side in Stremio)
     const qualityLine = extras.length > 0 ? `${q.tag} ${extras.join(' ')}` : q.tag;
-    // RD gets lightning bolt, P2P gets chain link — visually distinct
-    const namePrefix = mode === 'rd' ? '⚡ RD' : '🔗 P2P';
+    const namePrefix = mode === 'rd' ? '⚡ RD' : mode === 'tb' ? '⚡ TB' : '🔗 P2P';
 
     // TITLE field (right side in Stremio)
     const bgFlag = bg ? ' 🇧🇬' : '';
@@ -611,18 +711,39 @@ function configPageHTML() {
                 <div class="card-desc" data-bg="Моментално пускане без буфериране. Показва само torrents с гарантиран playback. Изисква Real-Debrid абонамент (~3\u20AC/месец). Списъкът се зарежда по-бавно (~10-15 сек), защото проверява кои торенти са кеширани."
                      data-en="Instant playback, zero buffering. Only shows torrents with guaranteed playback. Requires Real-Debrid subscription (~3\u20AC/month). Stream list loads slower (~10-15 sec) as it checks which torrents are cached."></div>
             </label>
+            <label class="radio-card" id="card-tb" onclick="selectDebrid('torbox')">
+                <input type="radio" name="debrid" value="torbox">
+                <div class="card-title">
+                    TorBox <span class="badge badge-premium" data-bg="Премиум" data-en="Premium"></span>
+                </div>
+                <div class="card-desc" data-bg="Моментално пускане без буфериране. Бърза проверка на кеш (~2-3 сек). Изисква TorBox абонамент."
+                     data-en="Instant playback, zero buffering. Fast cache check (~2-3 sec). Requires TorBox subscription."></div>
+            </label>
         </div>
-        <div class="token-row" id="tokenRow">
+        <!-- RD Token -->
+        <div class="token-row" id="rdTokenRow">
             <label data-bg="Real-Debrid API Token" data-en="Real-Debrid API Token"></label>
             <input type="text" id="rdToken" placeholder="ABCDEFGHIJKLMNOP1234567890...">
             <div class="token-help">
                 <span data-bg="Вземи от" data-en="Get it from"></span>
                 <a href="https://real-debrid.com/apitoken" target="_blank">real-debrid.com/apitoken</a>
             </div>
-            <div style="margin-top: 14px;">
+        </div>
+        <!-- TorBox Token -->
+        <div class="token-row" id="tbTokenRow">
+            <label data-bg="TorBox API Token" data-en="TorBox API Token"></label>
+            <input type="text" id="tbToken" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+            <div class="token-help">
+                <span data-bg="Вземи от" data-en="Get it from"></span>
+                <a href="https://torbox.app/settings" target="_blank">torbox.app/settings</a>
+            </div>
+        </div>
+        <!-- Debrid mode (shared by RD and TB) -->
+        <div class="token-row" id="debridModeRow">
+            <div style="margin-top: 4px;">
                 <label style="font-size:13px; font-weight:600; margin-bottom:8px; display:block; color:#999;"
                        data-bg="Какво да показва" data-en="What to show"></label>
-                <div class="check-group" id="rdModeGroup" data-mode="radio">
+                <div class="check-group" id="debridModeGroup" data-mode="radio">
                     <div class="chip on" data-value="guaranteed">
                         <span data-bg="Само гарантирани" data-en="Guaranteed only"></span>
                     </div>
@@ -630,8 +751,8 @@ function configPageHTML() {
                         <span data-bg="Гарантирани + останали" data-en="Guaranteed + others"></span>
                     </div>
                 </div>
-                <div class="hint" data-bg="'Гарантирани' са кеширани в Real-Debrid — пускат моментално. 'Останали' се показват отдолу като P2P backup."
-                     data-en="'Guaranteed' are cached on Real-Debrid — instant playback. 'Others' appear below as P2P backup."></div>
+                <div class="hint" data-bg="'Гарантирани' са кеширани — пускат моментално. 'Останали' се показват отдолу като P2P backup."
+                     data-en="'Guaranteed' are cached — instant playback. 'Others' appear below as P2P backup."></div>
             </div>
         </div>
     </div>
@@ -734,9 +855,12 @@ function setLang(lang) {
 
 function selectDebrid(value) {
     document.querySelectorAll('.radio-card').forEach(c => c.classList.remove('selected'));
-    document.getElementById(value === 'realdebrid' ? 'card-rd' : 'card-p2p').classList.add('selected');
+    const cardId = value === 'realdebrid' ? 'card-rd' : value === 'torbox' ? 'card-tb' : 'card-p2p';
+    document.getElementById(cardId).classList.add('selected');
     document.querySelector('input[name="debrid"][value="' + value + '"]').checked = true;
-    document.getElementById('tokenRow').classList.toggle('visible', value === 'realdebrid');
+    document.getElementById('rdTokenRow').classList.toggle('visible', value === 'realdebrid');
+    document.getElementById('tbTokenRow').classList.toggle('visible', value === 'torbox');
+    document.getElementById('debridModeRow').classList.toggle('visible', value === 'realdebrid' || value === 'torbox');
 }
 
 // Chip toggle logic
@@ -770,8 +894,14 @@ function buildConfigString() {
     if (debrid === 'realdebrid') {
         const token = document.getElementById('rdToken').value.trim();
         if (token) parts.push('rdtoken=' + token);
-        const rdmode = getSelected('rdModeGroup');
-        if (rdmode[0] && rdmode[0] !== 'guaranteed') parts.push('rdmode=' + rdmode[0]);
+    }
+    if (debrid === 'torbox') {
+        const token = document.getElementById('tbToken').value.trim();
+        if (token) parts.push('tbtoken=' + token);
+    }
+    if (debrid === 'realdebrid' || debrid === 'torbox') {
+        const mode = getSelected('debridModeGroup');
+        if (mode[0] && mode[0] !== 'guaranteed') parts.push('debridmode=' + mode[0]);
     }
 
     const content = getSelected('contentGroup');
@@ -796,6 +926,11 @@ function getManifestUrl() {
         const token = document.getElementById('rdToken').value.trim();
         if (!token) { alert(currentLang === 'bg' ? 'Въведи Real-Debrid token' : 'Enter Real-Debrid token'); return null; }
         if (token.length < 20) { alert(currentLang === 'bg' ? 'Token-ът изглежда невалиден' : 'Token looks invalid'); return null; }
+    }
+    if (debrid === 'torbox') {
+        const token = document.getElementById('tbToken').value.trim();
+        if (!token) { alert(currentLang === 'bg' ? 'Въведи TorBox token' : 'Enter TorBox token'); return null; }
+        if (token.length < 10) { alert(currentLang === 'bg' ? 'Token-ът изглежда невалиден' : 'Token looks invalid'); return null; }
     }
     return window.location.origin + '/' + encodeURIComponent(buildConfigString()) + '/manifest.json';
 }
