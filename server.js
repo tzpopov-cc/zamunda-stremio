@@ -52,7 +52,7 @@ async function getCount(key) { return (await redisCmd('GET', `zamunda:${key}`)) 
 async function logEvent(type, msg) {
     const entry = `${new Date().toISOString().substring(0,19)} [${type}] ${msg}`;
     await redisCmd('LPUSH', 'zamunda:logs', entry);
-    await redisCmd('LTRIM', 'zamunda:logs', '0', '199'); // keep last 200
+    await redisCmd('LTRIM', 'zamunda:logs', '0', '499'); // keep last 500
 }
 async function getLogs(count = 50) {
     return (await redisCmd('LRANGE', 'zamunda:logs', '0', String(count - 1))) || [];
@@ -142,7 +142,7 @@ async function searchZamunda(query) {
     if (cached) return cached;
     try {
         const res = await axios.get(ZAMUNDA_API, {
-            params: { q: query },
+            params: { q: query, limit: 50 },
             timeout: 10000,
             headers: { 'User-Agent': 'Mozilla/5.0 ZamundaStremio/1.0' }
         });
@@ -202,18 +202,73 @@ function matchesEpisode(title, season, episode) {
     const t = title.toUpperCase();
     const s = String(season).padStart(2, '0');
     const e = String(episode).padStart(2, '0');
+    const sInt = parseInt(season);
+    const eInt = parseInt(episode);
+
+    // 1. Exact episode match: S01E02, S01.E02, 1x02, Season.1.Episode.2
     if ([
         new RegExp(`S${s}E${e}\\b`),
         new RegExp(`S${s}\\.E${e}\\b`),
-        new RegExp(`\\b${parseInt(season)}X${e}\\b`),
-        new RegExp(`SEASON.${parseInt(season)}.EPISODE.${parseInt(episode)}`),
+        new RegExp(`\\b${sInt}X${e}\\b`),
+        new RegExp(`SEASON[\\s._]*${sInt}[\\s._]*EPISODE[\\s._]*${eInt}\\b`),
     ].some(p => p.test(t))) return 'episode';
+
+    // 2. Anime absolute episode: "- 02", "- 2", "EP 02", "EP02", "E02" (no season prefix)
+    if (sInt === 1) {
+        const absPatterns = [
+            new RegExp(`[\\s._-]+${e}\\s*[\\[\\(]`),           // "- 02 [720p]"
+            new RegExp(`[\\s._-]+${e}\\s*$`),                   // "- 02" at end
+            new RegExp(`[\\s._-]+${eInt}\\s*[\\[\\(]`),         // "- 2 [720p]"
+            new RegExp(`[\\s._-]+${eInt}\\s*$`),                 // "- 2" at end
+            new RegExp(`EP[\\s._]*${e}\\b`),                     // "EP02", "EP 02"
+            new RegExp(`\\bE${e}\\b(?!.*S\\d)`),                 // "E02" without S prefix
+        ];
+        if (absPatterns.some(p => p.test(t))) return 'episode';
+    }
+
+    // 3. Multi-episode range: S01E01-03, "- 01-12", "13-16"
+    const rangePatterns = [
+        new RegExp(`S${s}E(\\d+)[-–](\\d+)`),                    // S01E01-03
+        new RegExp(`[\\s._-]+(\\d+)[-–](\\d+)\\s*[\\[\\(]`),     // "- 01-12 [720p]"
+        new RegExp(`[\\s._-]+(\\d+)[-–](\\d+)\\s*$`),             // "01-12" at end
+    ];
+    for (const p of rangePatterns) {
+        const m = t.match(p);
+        if (m) {
+            const from = parseInt(m[1]);
+            const to = parseInt(m[2]);
+            if (eInt >= from && eInt <= to) return 'episode';
+        }
+    }
+
+    // 4. Season pack: S01 (no episode), Season 1, Series 1, Сезон 1
     if ([
-        new RegExp(`\\bS${s}\\b(?![Ex])`),
-        new RegExp(`SEASON[\\s._]*${parseInt(season)}\\b`),
-        new RegExp(`SERIES[\\s._]*${parseInt(season)}\\b`),
-        new RegExp(`СЕЗОН[\\s._]*${parseInt(season)}\\b`),
+        new RegExp(`\\bS${s}\\b(?!E|\\d)`),
+        new RegExp(`SEASON[\\s._]*${sInt}\\b`),
+        new RegExp(`SERIES[\\s._]*${sInt}\\b`),
+        new RegExp(`СЕЗОН[\\s._]*${sInt}\\b`),
     ].some(p => p.test(t))) return 'season';
+
+    // 5. Multi-season range: S01-S12, Seasons 1-5
+    const msPatterns = [
+        new RegExp(`S(\\d+)[-–]S?(\\d+)`),                        // S01-S12 or S01-12
+        new RegExp(`SEASONS?[\\s._]*(\\d+)[-–](\\d+)`),           // Seasons 1-5
+        new RegExp(`SERIES[\\s._]*(\\d+)[-–](\\d+)`),             // Series 1-5
+    ];
+    for (const p of msPatterns) {
+        const m = t.match(p);
+        if (m) {
+            const from = parseInt(m[1]);
+            const to = parseInt(m[2]);
+            if (sInt >= from && sInt <= to) return 'season';
+        }
+    }
+
+    // 6. Complete/full series packs
+    if (/COMPLETE|FULL.SERIES|ALL.SEASONS|COLLECTION|BOX.SET|INTEGRALE/i.test(t)) {
+        return 'season';
+    }
+
     return null;
 }
 
@@ -382,13 +437,16 @@ function applyFilters(torrents, config, type) {
 
     // Source filter removed — all sources always included
 
-    // Quality filter
+    // Quality — always detect for display, only filter if not all selected
     const qualities = config.quality.split(',').map(q => q.trim().toLowerCase());
+    const allQualities = qualities.length >= 4 || config.quality === DEFAULTS.quality;
     filtered.forEach(t => {
         t._quality = detectQuality(t.title, t.size);
         t._extras = detectExtras(t.title);
     });
-    filtered = filtered.filter(t => qualities.includes(t._quality.key) || t._quality.key === 'unknown');
+    if (!allQualities) {
+        filtered = filtered.filter(t => qualities.includes(t._quality.key) || t._quality.key === 'unknown');
+    }
 
     // Size limit
     if (config.sizelimit) {
@@ -426,10 +484,14 @@ async function resolveStreams(type, fullId, config) {
     const episode = episodeStr ? parseInt(episodeStr) : null;
 
     const meta = await getMetadata(type, imdbId);
-    if (!meta) return [];
+    if (!meta) {
+        logEvent('MISS', `${type} ${imdbId} — Cinemeta returned no metadata`);
+        return [];
+    }
 
-    console.log(`\n🔍 ${type} "${meta.name}"${season ? ` S${season}E${episode}` : ''} [${config.debrid}|${config.content}]`);
-    logEvent('SEARCH', `${type} "${meta.name}"${season ? ` S${season}E${episode}` : ''} [${config.debrid}|${config.content}]`);
+    const label = `${type} "${meta.name}"${season ? ` S${season}E${episode}` : ''}`;
+    console.log(`\n🔍 ${label} [${config.debrid}|${config.content}]`);
+    logEvent('SEARCH', `${label} [${config.debrid}|${config.content}]`);
 
     // Build search queries — for series, search with season/episode patterns too
     // because zamunda API returns max 20 results per query
@@ -461,18 +523,31 @@ async function resolveStreams(type, fullId, config) {
     });
     console.log(`  ${allTorrents.length} unique torrents`);
 
+    if (allTorrents.length === 0) {
+        logEvent('MISS', `${label} — 0 results from zamunda`);
+        return [];
+    }
+
     // Episode matching for series
     if (type === 'series' && season && episode) {
+        const beforeCount = allTorrents.length;
         allTorrents = allTorrents.map(t => ({
             ...t, _matchType: matchesEpisode(t.title, season, episode)
         })).filter(t => t._matchType !== null);
         console.log(`  ${allTorrents.length} match S${season}E${episode}`);
+        if (allTorrents.length === 0) {
+            logEvent('MISS', `${label} — ${beforeCount} torrents but 0 episode matches`);
+            return [];
+        }
     }
 
     // Apply content/source/quality/size filters
     let filtered = applyFilters(allTorrents, config, type);
     console.log(`  ${filtered.length} after filters`);
-    if (filtered.length === 0) return [];
+    if (filtered.length === 0) {
+        logEvent('MISS', `${label} — ${allTorrents.length} torrents but 0 after filters (${config.content}|${config.quality})`);
+        return [];
+    }
 
     // Sort
     filtered = sortTorrents(filtered, config);
@@ -1044,10 +1119,19 @@ app.get('/stats', async (req, res) => {
 
 // Logs — last 50 events (searches, results, errors)
 app.get('/logs', async (req, res) => {
-    const count = Math.min(parseInt(req.query.n) || 50, 200);
+    const count = Math.min(parseInt(req.query.n) || 50, 500);
     const logs = await getLogs(count);
     const errors = logs.filter(l => l.includes('[ERROR]'));
-    res.json({ total: logs.length, errors: errors.length, logs });
+    const misses = logs.filter(l => l.includes('[MISS]'));
+    const searches = logs.filter(l => l.includes('[SEARCH]'));
+    res.json({
+        total: logs.length,
+        searches: searches.length,
+        misses: misses.length,
+        errors: errors.length,
+        missDetails: misses,
+        logs
+    });
 });
 
 // Health
