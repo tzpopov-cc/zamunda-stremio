@@ -96,7 +96,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.0.0',
+        version: '2.1.0',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda.RIP архива (${mode} режим)`
