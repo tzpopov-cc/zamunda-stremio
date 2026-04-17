@@ -91,7 +91,7 @@ function buildManifest(config) {
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda.RIP архива (${mode} режим)`
             : `Movies and series from Zamunda.RIP archive (${mode} mode)`,
-        logo: 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f34c.png',
+        logo: 'https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/logo.png',
         background: 'https://zamunda.rip/static/pirateship.png',
         types: ['movie', 'series'],
         catalogs: [],
