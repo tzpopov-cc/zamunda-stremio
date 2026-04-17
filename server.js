@@ -683,7 +683,7 @@ function configPageHTML() {
 </div>
 <div class="wrap">
     <div class="header">
-        <div class="logo">🍌</div>
+        <div class="logo"><img src="https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png" alt="Zamunda BG" style="width:64px;height:64px;border-radius:12px;"></div>
         <h1>Zamunda BG</h1>
         <p class="subtitle" data-bg="Stremio addon — филми и сериали от Zamunda.RIP" data-en="Stremio addon — movies & series from Zamunda.RIP"></p>
     </div>
