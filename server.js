@@ -67,7 +67,7 @@ const DEFAULTS = {
     rdtoken: '',            // Real-Debrid token
     tbtoken: '',            // TorBox token
     debridmode: 'guaranteed', // guaranteed | all (guaranteed + P2P fallback)
-    content: 'bgaudio',    // bgaudio | all
+    content: 'all',        // bgaudio | all
     quality: '4k,1080p,720p,sd',
     sort: 'quality',        // quality | size
     sources: 'zamunda,arenabg,zelka',
@@ -857,8 +857,8 @@ function configPageHTML() {
             <span data-bg="Съдържание" data-en="Content"></span>
         </div>
         <div class="check-group" id="contentGroup" data-mode="radio">
-            <div class="chip on" data-value="bgaudio"><span data-bg="Само БГ аудио" data-en="BG Audio only"></span></div>
-            <div class="chip" data-value="all"><span data-bg="Всички" data-en="All content"></span></div>
+            <div class="chip" data-value="bgaudio"><span data-bg="Само БГ аудио" data-en="BG Audio only"></span></div>
+            <div class="chip on" data-value="all"><span data-bg="Всички" data-en="All content"></span></div>
         </div>
     </div>
 
