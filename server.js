@@ -532,13 +532,28 @@ async function resolveStreams(type, fullId, config) {
     // Episode matching for series
     if (type === 'series' && season && episode) {
         const beforeCount = allTorrents.length;
-        allTorrents = allTorrents.map(t => ({
+        const matched = allTorrents.map(t => ({
             ...t, _matchType: matchesEpisode(t.title, season, episode)
         })).filter(t => t._matchType !== null);
-        console.log(`  ${allTorrents.length} match S${season}E${episode}`);
-        if (allTorrents.length === 0) {
-            logEvent('MISS', `${label} — ${beforeCount} torrents but 0 episode matches`);
-            return [];
+        console.log(`  ${matched.length} match S${season}E${episode}`);
+
+        if (matched.length > 0) {
+            allTorrents = matched;
+        } else {
+            // Fallback: show torrents with no season/episode info at all (bare title packs)
+            // e.g. "Johnny Bravo" — likely a complete pack the user can pick from
+            const fallback = allTorrents.filter(t => {
+                const u = t.title.toUpperCase();
+                return !/S\d|SEASON|SERIES|СЕЗОН|E\d|EP\d|\d+[-–~]\d+/.test(u);
+            }).map(t => ({ ...t, _matchType: 'fallback' }));
+
+            if (fallback.length > 0) {
+                console.log(`  ${fallback.length} fallback (no season/ep info)`);
+                allTorrents = fallback;
+            } else {
+                logEvent('MISS', `${label} — ${beforeCount} torrents but 0 episode matches`);
+                return [];
+            }
         }
     }
 
