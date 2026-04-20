@@ -562,6 +562,17 @@ async function resolveStreams(type, fullId, config) {
     console.log(`  ${filtered.length} after filters`);
     if (filtered.length === 0) {
         logEvent('MISS', `${label} — ${allTorrents.length} torrents but 0 after filters (${config.content}|${config.quality})`);
+
+        // If BG audio filter is the reason, show a helpful message
+        if (config.content === 'bgaudio' && allTorrents.length > 0) {
+            logEvent('BGFILTER', `${label} — showed BG audio filter hint (${allTorrents.length} torrents available)`);
+            return [{
+                name: `⚠️ БГ Аудио филтър ⚠️`,
+                title: `Намерени са ${allTorrents.length} торенти, но нито един няма БГ аудио.\nИмаш активен филтър "Само БГ аудио".\nЗа да видиш всички — кликни тук за нова инсталация.`,
+                externalUrl: 'https://zamunda-stremio-qd0j.onrender.com',
+                behaviorHints: { notWebReady: true }
+            }];
+        }
         return [];
     }
 
