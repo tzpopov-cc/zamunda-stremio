@@ -568,7 +568,7 @@ async function resolveStreams(type, fullId, config) {
             logEvent('BGFILTER', `${label} — showed BG audio filter hint (${allTorrents.length} torrents available)`);
             return [{
                 name: `⚠️ БГ филтър\nZamunda BG`,
-                title: `${allTorrents.length} торенти без БГ аудио.\nФилтърът ти скрива всичко.\nКликни → нова инсталация.`,
+                title: `Има ${allTorrents.length} торенти, без БГ аудио.\nИмаш филтър "Само БГ аудио".\nКликни тук → смени настройката.`,
                 externalUrl: 'https://zamunda-stremio-qd0j.onrender.com',
                 behaviorHints: { notWebReady: true }
             }];
