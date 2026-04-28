@@ -563,17 +563,22 @@ async function resolveStreams(type, fullId, config) {
     if (filtered.length === 0) {
         logEvent('MISS', `${label} — ${allTorrents.length} torrents but 0 after filters (${config.content}|${config.quality})`);
 
-        // If BG audio filter is the reason, show a helpful message
+        // If BG audio filter is the reason, fall back to showing all results with a hint
         if (config.content === 'bgaudio' && allTorrents.length > 0) {
-            logEvent('BGFILTER', `${label} — showed BG audio filter hint (${allTorrents.length} torrents available)`);
-            return [{
-                name: `⚠️ БГ филтър\nZamunda BG`,
-                title: `Има ${allTorrents.length} торенти, без БГ аудио.\nИмаш филтър "Само БГ аудио".\nКликни тук → смени настройката.`,
-                externalUrl: 'https://zamunda-stremio-qd0j.onrender.com',
-                behaviorHints: { notWebReady: true }
-            }];
+            logEvent('BGFILTER', `${label} — no BG audio, falling back to all (${allTorrents.length} torrents)`);
+            // Re-apply filters without bgaudio restriction
+            const fallbackConfig = { ...config, content: 'all' };
+            filtered = applyFilters(allTorrents, fallbackConfig, type);
+            filtered = sortTorrents(filtered, fallbackConfig);
+            // Continue to debrid/P2P resolution below with a hint prepended
+            if (filtered.length > 0) {
+                config._bgFallback = true; // flag to prepend hint stream later
+            } else {
+                return [];
+            }
+        } else {
+            return [];
         }
-        return [];
     }
 
     // Sort
@@ -582,6 +587,14 @@ async function resolveStreams(type, fullId, config) {
     const hasRD = config.debrid === 'realdebrid' && config.rdtoken;
     const hasTB = config.debrid === 'torbox' && config.tbtoken;
     const debridMode = config.debridmode || config.rdmode || 'guaranteed'; // backward compat
+
+    // BG audio fallback hint — prepended to results when bgaudio filter found no BG tracks
+    const bgHint = config._bgFallback ? [{
+        name: `⚠️ Няма БГ аудио\nZamunda BG`,
+        title: `Няма торенти с БГ аудио.\nПоказваме всички ${filtered.length} резултата.`,
+        externalUrl: 'https://zamunda-stremio-qd0j.onrender.com',
+        behaviorHints: { notWebReady: true }
+    }] : [];
 
     // ---- TORBOX MODE ----
     if (hasTB) {
@@ -609,12 +622,12 @@ async function resolveStreams(type, fullId, config) {
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${tbStreams.length} TB + ${p2pStreams.length} P2P in ${elapsed}s`);
             logEvent('TB', `${tbStreams.length} TB + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
-            return [...tbStreams, ...p2pStreams];
+            return [...bgHint, ...tbStreams, ...p2pStreams];
         }
 
         console.log(`  → ${tbStreams.length} playable in ${elapsed}s`);
         logEvent('TB', `${tbStreams.length} playable in ${elapsed}s — "${meta.name}"`);
-        return tbStreams;
+        return [...bgHint, ...tbStreams];
     }
 
     // ---- RD MODE ----
@@ -638,18 +651,18 @@ async function resolveStreams(type, fullId, config) {
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s`);
             logEvent('RD', `${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
-            return [...rdStreams, ...p2pStreams];
+            return [...bgHint, ...rdStreams, ...p2pStreams];
         }
 
         console.log(`  → ${rdStreams.length} playable in ${elapsed}s`);
         logEvent('RD', `${rdStreams.length} playable in ${elapsed}s — "${meta.name}"`);
-        return rdStreams;
+        return [...bgHint, ...rdStreams];
     }
 
     // ---- P2P MODE ----
     console.log(`  P2P mode: returning ${filtered.length} streams`);
     logEvent('P2P', `${filtered.length} streams — "${meta.name}"`);
-    return filtered.map(torrent => buildStream(torrent, null, 'p2p'));
+    return [...bgHint, ...filtered.map(torrent => buildStream(torrent, null, 'p2p'))];
 }
 
 function buildStream(torrent, url, mode) {
