@@ -216,7 +216,7 @@ function matchesEpisode(title, season, episode) {
     // 2. Anime absolute episode: "- 137", "- 07 [720p]", "EP02" (no season prefix)
     if (sInt === 1) {
         const absPatterns = [
-            new RegExp(`[\\s._-]+0*${eInt}\\s*[\\[\\(.]`),      // "- 137 [720p]" or "- 07 [480p]"
+            new RegExp(`[\\s._-]+0*${eInt}\\s*[\\[\\(]`),       // "- 137 [720p]" or "- 07 [480p]"
             new RegExp(`[\\s._-]+0*${eInt}\\s*$`),               // "- 137" at end
             new RegExp(`[\\s._-]+0*${eInt}\\.\\w{2,4}$`),        // "- 01.mp4" at end
             new RegExp(`EP[\\s._]*0*${eInt}\\b`),                // "EP02", "EP 137"
