@@ -544,7 +544,7 @@ async function resolveStreams(type, fullId, config) {
             // e.g. "Johnny Bravo" — likely a complete pack the user can pick from
             const fallback = allTorrents.filter(t => {
                 const u = t.title.toUpperCase();
-                return !/S\d|SEASON|SERIES|СЕЗОН|E\d|EP\d|\d+[-–~]\d+/.test(u);
+                return !/S\d|SEASON\s*\d|SERIES\s*\d|СЕЗОН|E\d|EP\d|\d+[-–~]\d+/.test(u);
             }).map(t => ({ ...t, _matchType: 'fallback' }));
 
             if (fallback.length > 0) {
