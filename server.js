@@ -279,6 +279,69 @@ function extractInfohash(magnet) {
 }
 
 // =====================================================
+// TORRENT FILE LIST — resolve fileIdx for packs
+// =====================================================
+function decodeBencode(buf, pos = 0) {
+    const ch = buf[pos];
+    if (ch === 0x69) { // 'i' — integer
+        const end = buf.indexOf(0x65, pos + 1); // 'e'
+        return [parseInt(buf.slice(pos + 1, end).toString()), end + 1];
+    }
+    if (ch === 0x6C) { // 'l' — list
+        const list = []; pos++;
+        while (buf[pos] !== 0x65) { const [v, np] = decodeBencode(buf, pos); list.push(v); pos = np; }
+        return [list, pos + 1];
+    }
+    if (ch === 0x64) { // 'd' — dict
+        const dict = {}; pos++;
+        while (buf[pos] !== 0x65) {
+            const [k, kp] = decodeBencode(buf, pos);
+            const [v, vp] = decodeBencode(buf, kp);
+            dict[k.toString()] = v; pos = vp;
+        }
+        return [dict, pos + 1];
+    }
+    // string — length:data
+    const colon = buf.indexOf(0x3A, pos);
+    const len = parseInt(buf.slice(pos, colon).toString());
+    const str = buf.slice(colon + 1, colon + 1 + len);
+    return [str, colon + 1 + len];
+}
+
+async function resolveFileIdx(infohash, season, episode) {
+    try {
+        const res = await axios.get(
+            `https://itorrents.org/torrent/${infohash}.torrent`,
+            { responseType: 'arraybuffer', timeout: 5000, maxRedirects: 3 }
+        );
+        const [torrent] = decodeBencode(Buffer.from(res.data));
+        const info = torrent.info || torrent['info'];
+        if (!info || !info.files) return null;
+
+        const s = String(season).padStart(2, '0');
+        const e = String(episode).padStart(2, '0');
+        const pattern = new RegExp(`S${s}E${e}\\b`, 'i');
+
+        // Only consider video files
+        const videoExts = /\.(mkv|mp4|avi|mov|m4v|ts|webm)$/i;
+        let videoIdx = 0;
+        for (let i = 0; i < info.files.length; i++) {
+            const path = (info.files[i].path || []).map(p => p.toString()).join('/');
+            if (!videoExts.test(path)) continue;
+            if (pattern.test(path)) {
+                console.log(`  📁 fileIdx ${videoIdx} → ${path}`);
+                return videoIdx;
+            }
+            videoIdx++;
+        }
+        return null; // no match found
+    } catch (e) {
+        console.error('  ⚠️ fileIdx resolve failed:', e.message);
+        return null;
+    }
+}
+
+// =====================================================
 // REAL-DEBRID
 // =====================================================
 async function parallelLimit(tasks, limit) {
@@ -584,6 +647,17 @@ async function resolveStreams(type, fullId, config) {
     // Sort
     filtered = sortTorrents(filtered, config);
 
+    // Resolve correct fileIdx for pack torrents (season packs / complete series)
+    if (season && episode) {
+        const packs = filtered.filter(t => t._matchType === 'season' || t._matchType === 'fallback');
+        if (packs.length > 0) {
+            await Promise.all(packs.map(async (t) => {
+                const idx = await resolveFileIdx(t._infohash, season, episode);
+                if (idx !== null) t._resolvedFileIdx = idx;
+            }));
+        }
+    }
+
     const hasRD = config.debrid === 'realdebrid' && config.rdtoken;
     const hasTB = config.debrid === 'torbox' && config.tbtoken;
     const debridMode = config.debridmode || config.rdmode || 'guaranteed'; // backward compat
@@ -694,9 +768,10 @@ function buildStream(torrent, url, mode) {
         stream.url = url;
     } else {
         stream.infoHash = torrent._infohash;
-        // Omit fileIdx for season packs and fallback (complete series) so
-        // Stremio shows the file picker. Keep it for single episodes and movies.
-        if (torrent._matchType !== 'season' && torrent._matchType !== 'fallback') {
+        // For packs with resolved file index, use it; for single episodes/movies use 0
+        if (torrent._resolvedFileIdx !== undefined) {
+            stream.fileIdx = torrent._resolvedFileIdx;
+        } else if (torrent._matchType !== 'season' && torrent._matchType !== 'fallback') {
             stream.fileIdx = 0;
         }
     }
