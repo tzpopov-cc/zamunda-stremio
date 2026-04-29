@@ -694,7 +694,11 @@ function buildStream(torrent, url, mode) {
         stream.url = url;
     } else {
         stream.infoHash = torrent._infohash;
-        stream.fileIdx = 0;
+        // Omit fileIdx for season packs and fallback (complete series) so
+        // Stremio shows the file picker. Keep it for single episodes and movies.
+        if (torrent._matchType !== 'season' && torrent._matchType !== 'fallback') {
+            stream.fileIdx = 0;
+        }
     }
 
     return stream;
