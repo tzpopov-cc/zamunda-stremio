@@ -892,18 +892,21 @@ function copyUrl() {
 }
 
 // Load live stats
-function formatNum(n) {
-    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
-    return n.toString();
+function roundDown(n) {
+    if (n >= 1000000) return Math.floor(n / 100000) / 10 + 'M';
+    if (n >= 10000) return Math.floor(n / 1000) + 'K';
+    if (n >= 1000) return (Math.floor(n / 100) / 10) + 'K';
+    if (n >= 100) return Math.floor(n / 10) * 10;
+    return n;
 }
 
 fetch('/stats')
     .then(r => r.json())
     .then(s => {
-        document.getElementById('statUsers').textContent = s.uniqueUsers + '+';
-        document.getElementById('statStreams').textContent = formatNum(s.streamRequests) + '+';
-        document.getElementById('statUsersHeader').textContent = s.uniqueUsers + '+';
-        document.getElementById('statStreamsHeader').textContent = formatNum(s.streamRequests) + '+';
+        document.getElementById('statUsers').textContent = roundDown(s.uniqueUsers) + '+';
+        document.getElementById('statStreams').textContent = roundDown(s.streamRequests) + '+';
+        document.getElementById('statUsersHeader').textContent = roundDown(s.uniqueUsers) + '+';
+        document.getElementById('statStreamsHeader').textContent = roundDown(s.streamRequests) + '+';
     })
     .catch(() => {});
 

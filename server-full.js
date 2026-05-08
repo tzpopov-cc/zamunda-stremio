@@ -1114,9 +1114,16 @@ setLang('bg');
 // =====================================================
 
 // Track unique user from IP or RD token
+function getUserId(req, config) {
+    return config?.rdtoken ? config.rdtoken.substring(0, 8) : (req.ip || req.headers['x-forwarded-for'] || 'unknown');
+}
 function trackUser(req, config) {
-    const id = config?.rdtoken ? config.rdtoken.substring(0, 8) : (req.ip || req.headers['x-forwarded-for'] || 'unknown');
+    const id = getUserId(req, config);
     sadd('users', id);
+}
+function trackMigration(req, config) {
+    const id = getUserId(req, config);
+    sadd('migratedUsers', id);
 }
 
 // Config page
@@ -1131,6 +1138,7 @@ app.get('/:config/manifest.json', (req, res) => {
     incr('installs');
     const config = parseConfig(decodeURIComponent(req.params.config));
     trackUser(req, config);
+    trackMigration(req, config);
     res.json(buildManifest(config));
 });
 
@@ -1160,21 +1168,119 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
     }
 });
 
-// Stats
+// Stats — JSON API
 app.get('/stats', async (req, res) => {
-    const [configPage, installs, streams, users] = await Promise.all([
+    const [configPage, installs, streams, users, migrated] = await Promise.all([
         getCount('configPage'),
         getCount('installs'),
         getCount('streams'),
         scard('users'),
+        scard('migratedUsers'),
     ]);
     res.json({
         configPageViews: Number(configPage),
         installs: Number(installs),
         streamRequests: Number(streams),
         uniqueUsers: Number(users || 0),
+        migratedUsers: Number(migrated || 0),
         persistent: !!UPSTASH_URL,
     });
+});
+
+// Stats — Visual dashboard
+app.get('/dashboard', async (req, res) => {
+    const [configPage, installs, streams, users, migrated] = await Promise.all([
+        getCount('configPage'),
+        getCount('installs'),
+        getCount('streams'),
+        scard('users'),
+        scard('migratedUsers'),
+    ]);
+    const count = Math.min(parseInt(req.query.n) || 50, 500);
+    const logs = await getLogs(count);
+    const errors = logs.filter(l => l.includes('[ERROR]'));
+    const misses = logs.filter(l => l.includes('[MISS]'));
+    const searches = logs.filter(l => l.includes('[SEARCH]'));
+
+    res.type('html').send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Zamunda BG — Dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" type="image/png" href="https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png">
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--gold:#f5d020;--bg:#060608;--surface:rgba(255,255,255,0.04);--border:rgba(255,255,255,0.08);--text:#e0e0e0;--dim:#777;--muted:#444;--green:#66bb6a;--red:#ef5350;--blue:#42a5f5;--orange:#ffa726}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;padding:16px}
+.wrap{max-width:700px;margin:0 auto}
+h1{font-family:'Chakra Petch',sans-serif;font-size:24px;color:var(--gold);text-align:center;margin-bottom:4px;letter-spacing:1px}
+.sub{text-align:center;font-size:12px;color:var(--muted);margin-bottom:24px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center}
+.card.wide{grid-column:span 2}
+.card-value{font-family:'Chakra Petch',sans-serif;font-size:32px;font-weight:700;color:var(--gold);line-height:1}
+.card-value.green{color:var(--green)}
+.card-value.blue{color:var(--blue)}
+.card-value.red{color:var(--red)}
+.card-value.orange{color:var(--orange)}
+.card-label{font-size:11px;color:var(--dim);margin-top:4px;letter-spacing:0.5px}
+.section-title{font-family:'Chakra Petch',sans-serif;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:var(--dim);margin:20px 0 10px}
+.log-box{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:12px;max-height:50vh;overflow-y:auto;font-size:12px;line-height:1.8}
+.log-line{border-bottom:1px solid rgba(255,255,255,0.03);padding:2px 0}
+.log-line:last-child{border:none}
+.t-search{color:var(--blue)}
+.t-miss{color:var(--orange)}
+.t-error{color:var(--red)}
+.t-p2p{color:var(--green)}
+.t-rd,.t-tb{color:var(--gold)}
+.t-bg{color:#ce93d8}
+.refresh{display:block;margin:20px auto 0;padding:10px 24px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--dim);font-family:'Chakra Petch',sans-serif;font-size:13px;cursor:pointer;letter-spacing:0.5px}
+.refresh:hover{border-color:var(--gold);color:var(--gold)}
+@media(max-width:500px){.grid{grid-template-columns:repeat(2,1fr)}.card-value{font-size:26px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>ZAMUNDA BG</h1>
+<p class="sub">Live Dashboard — ${new Date().toISOString().substring(0,16).replace('T',' ')}</p>
+
+<div class="grid">
+<div class="card"><div class="card-value">${Number(users||0)}</div><div class="card-label">Unique Users</div></div>
+<div class="card"><div class="card-value green">${Number(migrated||0)}</div><div class="card-label">Migrated Users</div></div>
+<div class="card"><div class="card-value blue">${Number(configPage)}</div><div class="card-label">Page Views</div></div>
+<div class="card"><div class="card-value">${(Number(streams)/1000).toFixed(1)}K</div><div class="card-label">Stream Requests</div></div>
+<div class="card"><div class="card-value orange">${searches.length}</div><div class="card-label">Searches (last ${logs.length})</div></div>
+<div class="card"><div class="card-value ${misses.length > 0 ? 'orange' : 'green'}">${(misses.length/Math.max(searches.length,1)*100).toFixed(0)}%</div><div class="card-label">Miss Rate</div></div>
+</div>
+
+<div class="grid" style="grid-template-columns:repeat(2,1fr)">
+<div class="card"><div class="card-value ${errors.length > 0 ? 'red' : 'green'}">${errors.length}</div><div class="card-label">Errors</div></div>
+<div class="card"><div class="card-value orange">${misses.length}</div><div class="card-label">Misses</div></div>
+</div>
+
+<div class="section-title">Recent Activity (last ${logs.length})</div>
+<div class="log-box">
+${logs.map(l => {
+    let cls = '';
+    if (l.includes('[SEARCH]')) cls = 't-search';
+    else if (l.includes('[MISS]')) cls = 't-miss';
+    else if (l.includes('[ERROR]')) cls = 't-error';
+    else if (l.includes('[P2P]')) cls = 't-p2p';
+    else if (l.includes('[RD]')) cls = 't-rd';
+    else if (l.includes('[TB]')) cls = 't-tb';
+    else if (l.includes('[BGFILTER]')) cls = 't-bg';
+    const time = l.substring(11,16);
+    const rest = l.substring(20);
+    return '<div class="log-line"><span style="color:var(--muted)">' + time + '</span> <span class="' + cls + '">' + rest.replace(/</g,'&lt;') + '</span></div>';
+}).join('')}
+</div>
+
+<button class="refresh" onclick="location.reload()">Refresh</button>
+</div>
+</body>
+</html>`);
 });
 
 // Logs — last 50 events (searches, results, errors)
