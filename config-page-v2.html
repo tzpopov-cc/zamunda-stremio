@@ -1,0 +1,913 @@
+<!DOCTYPE html>
+<html lang="bg">
+<head>
+    <meta charset="UTF-8">
+    <title>Zamunda BG — Stremio Addon</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="icon" type="image/png" href="https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png">
+    <link rel="apple-touch-icon" href="https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --gold: #f5d020;
+            --gold-dim: rgba(245, 208, 32, 0.12);
+            --gold-glow: rgba(245, 208, 32, 0.25);
+            --bg: #060608;
+            --surface: rgba(255, 255, 255, 0.04);
+            --surface-hover: rgba(255, 255, 255, 0.07);
+            --border: rgba(255, 255, 255, 0.08);
+            --border-active: rgba(245, 208, 32, 0.4);
+            --text: #e0e0e0;
+            --text-dim: #777;
+            --text-muted: #444;
+            --font-display: 'Chakra Petch', sans-serif;
+            --font-body: 'DM Sans', sans-serif;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: var(--font-body);
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* ── Animated background ── */
+        .bg-canvas {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 0; pointer-events: none; overflow: hidden;
+        }
+        .bg-orb {
+            position: absolute; border-radius: 50%; filter: blur(120px); opacity: 0.04;
+            animation: orbFloat 20s ease-in-out infinite;
+        }
+        .bg-orb:nth-child(1) {
+            width: 600px; height: 600px; background: #f5d020;
+            top: -200px; left: -100px; animation-duration: 25s;
+        }
+        .bg-orb:nth-child(2) {
+            width: 500px; height: 500px; background: #e85d26;
+            bottom: -150px; right: -100px; animation-duration: 30s; animation-delay: -5s;
+        }
+        .bg-orb:nth-child(3) {
+            width: 400px; height: 400px; background: #f5d020;
+            top: 50%; left: 60%; animation-duration: 22s; animation-delay: -10s; opacity: 0.02;
+        }
+        @keyframes orbFloat {
+            0%, 100% { transform: translate(0, 0) scale(1); }
+            33% { transform: translate(30px, -40px) scale(1.05); }
+            66% { transform: translate(-20px, 30px) scale(0.95); }
+        }
+
+        /* Noise overlay */
+        .bg-noise {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 1; pointer-events: none; opacity: 0.03;
+            background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+            background-repeat: repeat;
+        }
+
+        /* Grid lines */
+        .bg-grid {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            z-index: 1; pointer-events: none; opacity: 0.025;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px);
+            background-size: 60px 60px;
+        }
+
+        /* ── Layout ── */
+        .wrap {
+            position: relative; z-index: 10;
+            max-width: 660px; margin: 0 auto; padding: 30px 20px 60px;
+        }
+
+        /* ── Header ── */
+        .header {
+            text-align: center; margin-bottom: 32px;
+            animation: fadeUp 0.6s ease-out;
+        }
+        .header-icon {
+            width: 72px; height: 72px; border-radius: 16px;
+            margin-bottom: 16px;
+            box-shadow: 0 0 40px rgba(245, 208, 32, 0.2);
+        }
+        h1 {
+            font-family: var(--font-display);
+            font-size: 38px; font-weight: 700;
+            color: var(--gold);
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            margin-bottom: 6px;
+        }
+        .subtitle {
+            font-size: 14px; color: var(--text-dim);
+            letter-spacing: 0.5px;
+        }
+        .version-badge {
+            display: inline-block; margin-top: 10px;
+            padding: 3px 12px; border-radius: 20px;
+            font-size: 11px; font-weight: 600;
+            background: var(--gold-dim); color: var(--gold);
+            letter-spacing: 0.5px;
+        }
+
+        .header-stats-bar {
+            margin-top: 16px; margin-bottom: 0;
+        }
+
+        /* ── Language toggle ── */
+        .lang-toggle {
+            position: fixed; top: 16px; right: 16px; display: flex; gap: 2px;
+            background: rgba(255,255,255,0.05); border: 1px solid var(--border);
+            border-radius: 8px; padding: 3px; z-index: 100;
+            backdrop-filter: blur(10px);
+        }
+        .lang-btn {
+            padding: 5px 14px; border: none; border-radius: 6px; cursor: pointer;
+            font-size: 12px; font-weight: 700; font-family: var(--font-display);
+            background: transparent; color: var(--text-muted);
+            transition: all 0.2s; letter-spacing: 1px;
+        }
+        .lang-btn.active { background: var(--gold-dim); color: var(--gold); }
+
+        /* ── Tabs ── */
+        .tabs {
+            display: flex; gap: 0; margin-bottom: 24px;
+            border-bottom: 1px solid var(--border);
+            animation: fadeUp 0.6s ease-out 0.1s both;
+        }
+        .tab {
+            padding: 12px 24px; border: none; background: none; cursor: pointer;
+            font-family: var(--font-display); font-size: 14px; font-weight: 600;
+            color: var(--text-muted); letter-spacing: 1px;
+            border-bottom: 2px solid transparent;
+            transition: all 0.25s;
+        }
+        .tab:hover { color: var(--text-dim); }
+        .tab.active {
+            color: var(--gold); border-bottom-color: var(--gold);
+        }
+        .tab-content { display: none; }
+        .tab-content.active {
+            display: block;
+            animation: fadeUp 0.4s ease-out;
+        }
+
+        /* ── Sections ── */
+        .section {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 14px;
+            backdrop-filter: blur(10px);
+            transition: border-color 0.3s;
+        }
+        .section:hover { border-color: rgba(255,255,255,0.12); }
+        .section-title {
+            font-family: var(--font-display);
+            font-size: 13px; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 1.5px;
+            margin-bottom: 14px;
+            display: flex; align-items: center; gap: 8px;
+            color: var(--text-dim);
+        }
+        .section-title .dot {
+            width: 6px; height: 6px; border-radius: 50%;
+            background: var(--gold); flex-shrink: 0;
+        }
+
+        /* ── Radio cards ── */
+        .radio-cards { display: flex; gap: 8px; }
+        .radio-card {
+            flex: 1; padding: 14px; border-radius: 10px; cursor: pointer;
+            border: 1px solid var(--border); transition: all 0.25s;
+            background: transparent;
+        }
+        .radio-card:hover { border-color: rgba(255,255,255,0.15); background: var(--surface-hover); }
+        .radio-card.selected {
+            border-color: var(--border-active);
+            background: var(--gold-dim);
+        }
+        .radio-card input { display: none; }
+        .radio-card .card-title {
+            font-family: var(--font-display);
+            font-weight: 700; font-size: 14px; margin-bottom: 4px;
+            display: flex; align-items: center; gap: 6px;
+        }
+        .radio-card .card-desc { font-size: 11px; color: var(--text-dim); line-height: 1.5; }
+        .badge {
+            font-family: var(--font-display);
+            font-size: 9px; padding: 2px 7px; border-radius: 4px;
+            font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .badge-free { background: rgba(76,175,80,0.15); color: #66bb6a; }
+        .badge-premium { background: var(--gold-dim); color: var(--gold); }
+
+        /* ── Token rows ── */
+        .token-row { margin-top: 12px; display: none; }
+        .token-row.visible { display: block; }
+        .token-row label {
+            font-family: var(--font-display);
+            font-size: 12px; font-weight: 600; letter-spacing: 0.5px;
+            margin-bottom: 6px; display: block; color: var(--text-dim);
+        }
+        .token-row input {
+            width: 100%; padding: 11px 14px;
+            background: rgba(0,0,0,0.3); border: 1px solid var(--border);
+            border-radius: 8px; color: var(--gold);
+            font-family: 'DM Mono', monospace; font-size: 13px;
+            transition: border-color 0.2s;
+        }
+        .token-row input:focus { outline: none; border-color: var(--gold); }
+        .token-help { font-size: 11px; color: var(--text-muted); margin-top: 6px; }
+        .token-help a { color: var(--gold); text-decoration: none; }
+
+        /* ── Chips ── */
+        .check-group { display: flex; flex-wrap: wrap; gap: 8px; }
+        .chip {
+            padding: 8px 16px; border-radius: 20px; cursor: pointer;
+            font-size: 13px; font-weight: 500;
+            border: 1px solid var(--border);
+            color: var(--text-dim); background: transparent;
+            transition: all 0.2s; user-select: none;
+        }
+        .chip:hover { border-color: rgba(255,255,255,0.2); color: var(--text); }
+        .chip.on {
+            border-color: var(--border-active);
+            background: var(--gold-dim); color: var(--gold);
+        }
+
+        /* ── Select ── */
+        select {
+            width: 100%; padding: 11px 14px;
+            background: rgba(0,0,0,0.3); border: 1px solid var(--border);
+            border-radius: 8px; color: var(--text); font-size: 13px;
+            font-family: var(--font-body);
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23666'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat; background-position: right 14px center;
+            transition: border-color 0.2s;
+        }
+        select:focus { outline: none; border-color: var(--gold); }
+        select option { background: #111; color: var(--text); }
+
+        /* ── Size input ── */
+        .size-input {
+            width: 100%; padding: 11px 14px;
+            background: rgba(0,0,0,0.3); border: 1px solid var(--border);
+            border-radius: 8px; color: var(--text);
+            font-family: 'DM Mono', monospace; font-size: 13px;
+            transition: border-color 0.2s;
+        }
+        .size-input:focus { outline: none; border-color: var(--gold); }
+        .hint { font-size: 11px; color: var(--text-muted); margin-top: 8px; line-height: 1.5; }
+
+        /* ── Install buttons ── */
+        .install-section { margin-top: 24px; animation: fadeUp 0.6s ease-out 0.3s both; }
+        .btn-row { display: flex; gap: 10px; }
+        .btn {
+            flex: 1; padding: 15px 20px; border: none; border-radius: 10px;
+            font-family: var(--font-display);
+            font-size: 15px; font-weight: 700; letter-spacing: 0.5px;
+            cursor: pointer; transition: all 0.25s; text-align: center;
+        }
+        .btn:hover { transform: translateY(-2px); }
+        .btn-primary {
+            background: var(--gold); color: #000;
+            box-shadow: 0 4px 20px rgba(245, 208, 32, 0.3);
+        }
+        .btn-primary:hover {
+            background: #ffd83d;
+            box-shadow: 0 6px 30px rgba(245, 208, 32, 0.4);
+        }
+        .btn-secondary {
+            background: var(--surface); color: var(--text-dim);
+            border: 1px solid var(--border);
+        }
+        .btn-secondary:hover { border-color: rgba(255,255,255,0.2); color: var(--text); }
+
+        #manifestUrl {
+            font-family: 'DM Mono', monospace; font-size: 11px;
+            background: rgba(0,0,0,0.4); border: 1px solid var(--border);
+            padding: 12px; border-radius: 8px; margin-top: 12px;
+            word-break: break-all; display: none;
+            line-height: 1.5; color: var(--gold);
+        }
+
+        /* ── Stats + Donate ── */
+        .community-section {
+            margin-top: 32px;
+            animation: fadeUp 0.6s ease-out 0.4s both;
+        }
+        .stats-bar {
+            display: flex; justify-content: center; gap: 32px;
+            padding: 20px; margin-bottom: 16px;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 14px;
+        }
+        .stat {
+            text-align: center;
+        }
+        .stat-value {
+            font-family: var(--font-display);
+            font-size: 28px; font-weight: 700;
+            color: var(--gold);
+            line-height: 1;
+        }
+        .stat-label {
+            font-size: 11px; color: var(--text-dim);
+            margin-top: 4px; letter-spacing: 0.5px;
+        }
+
+        .support-card {
+            background: linear-gradient(135deg, rgba(245, 208, 32, 0.08) 0%, rgba(245, 208, 32, 0.02) 100%);
+            border: 1px solid var(--border-active);
+            border-radius: 14px; padding: 28px 32px;
+            display: flex; gap: 32px; align-items: center;
+            position: relative; overflow: hidden;
+        }
+        .support-card::before {
+            content: ''; position: absolute; top: -50%; right: -50%;
+            width: 200px; height: 200px; border-radius: 50%;
+            background: radial-gradient(circle, rgba(245, 208, 32, 0.08) 0%, transparent 70%);
+            pointer-events: none;
+        }
+        .support-text { flex: 1; position: relative; z-index: 1; }
+        .support-text h3 {
+            font-family: var(--font-display);
+            font-size: 18px; font-weight: 700;
+            color: var(--gold); margin-bottom: 10px;
+            letter-spacing: 0.5px;
+        }
+        .support-meta {
+            font-size: 12px; color: var(--text-dim);
+            line-height: 1.7; margin-bottom: 16px;
+        }
+        .support-meta span { color: var(--gold); font-weight: 600; }
+        .revolut-btn {
+            display: inline-flex; align-items: center; gap: 8px;
+            padding: 12px 24px; border-radius: 10px;
+            background: var(--gold); color: #000;
+            font-family: var(--font-display);
+            font-size: 14px; font-weight: 700;
+            text-decoration: none; letter-spacing: 0.5px;
+            transition: all 0.25s;
+            box-shadow: 0 4px 20px rgba(245, 208, 32, 0.25);
+        }
+        .revolut-btn:hover {
+            background: #ffd83d;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 30px rgba(245, 208, 32, 0.4);
+        }
+        .revolut-btn svg { width: 18px; height: 18px; }
+        .support-badges {
+            flex-shrink: 0; position: relative; z-index: 1;
+            display: flex; flex-direction: row; align-items: center; gap: 16px;
+        }
+        .support-logo {
+            width: 100px; height: 100px; border-radius: 12px;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+        }
+        .qr-wrap {
+            width: 100px; height: 100px;
+            background: #fff; border-radius: 10px;
+            padding: 8px;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+        }
+        .qr-wrap svg { width: 100%; height: 100%; }
+
+        /* ── Changelog ── */
+        .changelog-entry {
+            padding: 20px;
+            background: var(--surface); border: 1px solid var(--border);
+            border-radius: 14px; margin-bottom: 12px;
+        }
+        .changelog-header {
+            display: flex; align-items: center; gap: 10px;
+            margin-bottom: 10px;
+        }
+        .changelog-version {
+            font-family: var(--font-display);
+            font-size: 16px; font-weight: 700; color: var(--gold);
+        }
+        .changelog-date {
+            font-size: 12px; color: var(--text-muted);
+        }
+        .changelog-tag {
+            font-family: var(--font-display);
+            font-size: 9px; padding: 3px 8px; border-radius: 4px;
+            font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .tag-new { background: rgba(76,175,80,0.15); color: #66bb6a; }
+        .tag-improved { background: rgba(33,150,243,0.15); color: #42a5f5; }
+        .tag-fix { background: rgba(255,152,0,0.15); color: #ffa726; }
+        .changelog-body {
+            font-size: 13px; color: var(--text-dim); line-height: 1.7;
+        }
+        .changelog-body li { margin-bottom: 4px; margin-left: 16px; }
+
+        /* ── Footer ── */
+        .footer {
+            text-align: center; margin-top: 32px;
+            font-size: 11px; color: var(--text-muted);
+            letter-spacing: 0.5px;
+        }
+        .footer a { color: var(--text-dim); text-decoration: none; }
+
+        /* ── Animations ── */
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(16px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 540px) {
+            .radio-cards { flex-direction: column; }
+            .lang-toggle { position: static; justify-content: center; margin-bottom: 16px; }
+            .stats-bar { gap: 16px; }
+            .stat-value { font-size: 22px; }
+            .support-card { flex-direction: column; text-align: center; padding: 24px 20px; gap: 20px; }
+            .support-text { text-align: center; }
+            .support-badges { flex-direction: row; justify-content: center; gap: 16px; }
+            .support-logo { width: 120px; height: 120px; border-radius: 14px; }
+            .qr-wrap { width: 120px; height: 120px; }
+            h1 { font-size: 30px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- Background effects -->
+<div class="bg-canvas">
+    <div class="bg-orb"></div>
+    <div class="bg-orb"></div>
+    <div class="bg-orb"></div>
+</div>
+<div class="bg-noise"></div>
+<div class="bg-grid"></div>
+
+<!-- Language toggle -->
+<div class="lang-toggle">
+    <button class="lang-btn active" onclick="setLang('bg')" id="langBG">BG</button>
+    <button class="lang-btn" onclick="setLang('en')" id="langEN">EN</button>
+</div>
+
+<div class="wrap">
+    <!-- Header -->
+    <div class="header">
+        <img src="https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png"
+             alt="Zamunda BG" class="header-icon">
+        <h1>Zamunda BG</h1>
+        <p class="subtitle" data-bg="Stremio addon за филми и сериали" data-en="Stremio addon for movies & series"></p>
+        <p class="sources" style="font-size:11px; color:var(--text-muted); margin-top:6px; letter-spacing:1px;" data-bg="Zamunda · ArenaBG · Zelka" data-en="Zamunda · ArenaBG · Zelka"></p>
+        <div class="version-badge">v2.1.0</div>
+        <div class="stats-bar header-stats-bar" id="headerStatsBar">
+            <div class="stat">
+                <div class="stat-value" id="statUsersHeader">—</div>
+                <div class="stat-label" data-bg="потребители" data-en="users"></div>
+            </div>
+            <div class="stat">
+                <div class="stat-value" id="statStreamsHeader">—</div>
+                <div class="stat-label" data-bg="търсения" data-en="searches"></div>
+            </div>
+            <div class="stat">
+                <div class="stat-value">450K+</div>
+                <div class="stat-label" data-bg="торенти" data-en="torrents"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="tabs">
+        <button class="tab active" onclick="switchTab('configure')" data-bg="Настройки" data-en="Configure">Настройки</button>
+        <button class="tab" onclick="switchTab('changelog')" data-bg="Промени" data-en="Changelog">Промени</button>
+    </div>
+
+    <!-- ═══════════════════════════════════ -->
+    <!-- TAB: Configure                      -->
+    <!-- ═══════════════════════════════════ -->
+    <div class="tab-content active" id="tab-configure">
+
+        <!-- DEBRID -->
+        <div class="section">
+            <div class="section-title">
+<span data-bg="Streaming метод" data-en="Streaming method"></span>
+            </div>
+            <div class="radio-cards">
+                <label class="radio-card selected" id="card-p2p" onclick="selectDebrid('none')">
+                    <input type="radio" name="debrid" value="none" checked>
+                    <div class="card-title">
+                        P2P <span class="badge badge-free" data-bg="Безплатно" data-en="Free"></span>
+                    </div>
+                    <div class="card-desc" data-bg="Торент стрийминг. Зависи от seeders."
+                         data-en="Torrent streaming. Depends on seeders."></div>
+                </label>
+                <label class="radio-card" id="card-rd" onclick="selectDebrid('realdebrid')">
+                    <input type="radio" name="debrid" value="realdebrid">
+                    <div class="card-title">
+                        Real-Debrid <span class="badge badge-premium" data-bg="Премиум" data-en="Premium"></span>
+                    </div>
+                    <div class="card-desc" data-bg="Без буфериране. Проверка ~10-15 сек."
+                         data-en="No buffering. Check takes ~10-15 sec."></div>
+                </label>
+                <label class="radio-card" id="card-tb" onclick="selectDebrid('torbox')">
+                    <input type="radio" name="debrid" value="torbox">
+                    <div class="card-title">
+                        TorBox <span class="badge badge-premium" data-bg="Премиум" data-en="Premium"></span>
+                    </div>
+                    <div class="card-desc" data-bg="Без буфериране. Бърз кеш ~2-3 сек."
+                         data-en="No buffering. Fast cache ~2-3 sec."></div>
+                </label>
+            </div>
+            <!-- RD Token -->
+            <div class="token-row" id="rdTokenRow">
+                <label>Real-Debrid API Token</label>
+                <input type="text" id="rdToken" placeholder="ABCDEFGHIJKLMNOP1234567890...">
+                <div class="token-help">
+                    <span data-bg="Вземи от" data-en="Get from"></span>
+                    <a href="https://real-debrid.com/apitoken" target="_blank">real-debrid.com/apitoken</a>
+                </div>
+            </div>
+            <!-- TorBox Token -->
+            <div class="token-row" id="tbTokenRow">
+                <label>TorBox API Token</label>
+                <input type="text" id="tbToken" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
+                <div class="token-help">
+                    <span data-bg="Вземи от" data-en="Get from"></span>
+                    <a href="https://torbox.app/settings" target="_blank">torbox.app/settings</a>
+                </div>
+            </div>
+            <!-- Debrid mode -->
+            <div class="token-row" id="debridModeRow">
+                <div style="margin-top: 4px;">
+                    <label data-bg="Какво да показва" data-en="What to show"></label>
+                    <div class="check-group" id="debridModeGroup" data-mode="radio">
+                        <div class="chip on" data-value="all">
+                            <span data-bg="Кеширани + P2P" data-en="Cached + P2P"></span>
+                        </div>
+                        <div class="chip" data-value="guaranteed">
+                            <span data-bg="Само кеширани" data-en="Cached only"></span>
+                        </div>
+                    </div>
+                    <div class="hint" data-bg="⚡ Кеширани се показват първи (моментално). 🌐 P2P се добавят отдолу като backup."
+                         data-en="⚡ Cached streams appear first (instant). 🌐 P2P added below as backup."></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- CONTENT -->
+        <div class="section">
+            <div class="section-title">
+<span data-bg="Съдържание" data-en="Content"></span>
+            </div>
+            <div class="check-group" id="contentGroup" data-mode="radio">
+                <div class="chip on" data-value="all"><span data-bg="Всички" data-en="All content"></span></div>
+                <div class="chip" data-value="bgaudio"><span data-bg="Само БГ аудио" data-en="BG Audio only"></span></div>
+            </div>
+        </div>
+
+        <!-- QUALITY -->
+        <div class="section">
+            <div class="section-title">
+<span data-bg="Качество" data-en="Quality"></span>
+            </div>
+            <div class="check-group" id="qualityGroup" data-mode="multi">
+                <div class="chip on" data-value="4k">4K</div>
+                <div class="chip on" data-value="1080p">1080p</div>
+                <div class="chip on" data-value="720p">720p</div>
+                <div class="chip on" data-value="sd">SD</div>
+            </div>
+        </div>
+
+        <!-- SORTING -->
+        <div class="section">
+            <div class="section-title">
+<span data-bg="Сортиране" data-en="Sorting"></span>
+            </div>
+            <select id="sortSelect">
+                <option value="quality" data-bg="По качество (най-добро първо)" data-en="By quality (best first)">По качество (най-добро първо)</option>
+                <option value="size" data-bg="По размер (най-голям първо)" data-en="By size (largest first)">По размер (най-голям първо)</option>
+            </select>
+        </div>
+
+        <!-- SIZE LIMIT -->
+        <div class="section">
+            <div class="section-title">
+<span data-bg="Лимит на размер" data-en="Size limit"></span>
+            </div>
+            <input type="text" class="size-input" id="sizeLimit"
+                   data-bg-placeholder="Без лимит" data-en-placeholder="No limit" placeholder="Без лимит">
+            <div class="hint" data-bg="Примери: 5GB, 10GB. Различен за филми/сериали: 10GB,2GB"
+                 data-en="Examples: 5GB, 10GB. Different for movies/series: 10GB,2GB"></div>
+        </div>
+
+        <!-- INSTALL -->
+        <div class="install-section">
+            <div class="btn-row">
+                <button class="btn btn-primary" onclick="install()">
+                    <span data-bg="Инсталирай в Stremio" data-en="Install in Stremio"></span>
+                </button>
+                <button class="btn btn-secondary" onclick="copyUrl()">
+                    <span data-bg="Копирай URL" data-en="Copy URL"></span>
+                </button>
+            </div>
+            <div id="manifestUrl"></div>
+        </div>
+
+        <!-- COMMUNITY / STATS -->
+        <div class="community-section">
+            <div class="stats-bar" id="statsBar">
+                <div class="stat">
+                    <div class="stat-value" id="statUsers">—</div>
+                    <div class="stat-label" data-bg="потребители" data-en="users"></div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="statStreams">—</div>
+                    <div class="stat-label" data-bg="търсения" data-en="searches"></div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value">450K+</div>
+                    <div class="stat-label" data-bg="торенти" data-en="torrents"></div>
+                </div>
+            </div>
+
+            <div class="support-card">
+                <div class="support-text">
+                    <h3 data-bg="Подкрепи Zamunda BG" data-en="Support Zamunda BG"></h3>
+                    <div class="support-meta">
+                        <span data-bg="20+ часа" data-en="20+ hours"></span>
+                        <span style="color:var(--text-dim); font-weight:400;"
+                              data-bg=" разработка" data-en=" development"></span><br>
+                        <span data-bg="~10 часа/месец" data-en="~10 hours/month"></span>
+                        <span style="color:var(--text-dim); font-weight:400;"
+                              data-bg=" поддръжка" data-en=" maintenance"></span><br>
+                        <span data-bg="1" data-en="1"></span>
+                        <span style="color:var(--text-dim); font-weight:400;"
+                              data-bg=" разработчик, в свободното си време" data-en=" developer, in their free time"></span>
+                    </div>
+                    <a href="https://revolut.me/tzvetoe6px" target="_blank" class="revolut-btn">
+                        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17.434 2H6.566A4.566 4.566 0 0 0 2 6.566v10.868A4.566 4.566 0 0 0 6.566 22h10.868A4.566 4.566 0 0 0 22 17.434V6.566A4.566 4.566 0 0 0 17.434 2ZM15.5 7h-3.25c-1.517 0-2.75 1.233-2.75 2.75 0 1.174.736 2.175 1.771 2.565L15.5 17H12l-3.5-4.5V17H6V7h2.5v4l3.75-4H15.5Z"/></svg>
+                        <span data-bg="Подкрепи с Revolut" data-en="Support via Revolut"></span>
+                    </a>
+                </div>
+                <div class="support-badges">
+                    <img src="https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png"
+                         alt="Zamunda BG" class="support-logo">
+                    <div class="qr-wrap">
+                        <svg viewBox="0 0 25 25" xmlns="http://www.w3.org/2000/svg"><path d="M0,0H1V1H0zM1,0H2V1H1zM2,0H3V1H2zM3,0H4V1H3zM4,0H5V1H4zM5,0H6V1H5zM6,0H7V1H6zM8,0H9V1H8zM10,0H11V1H10zM11,0H12V1H11zM12,0H13V1H12zM13,0H14V1H13zM14,0H15V1H14zM18,0H19V1H18zM19,0H20V1H19zM20,0H21V1H20zM21,0H22V1H21zM22,0H23V1H22zM23,0H24V1H23zM24,0H25V1H24zM0,1H1V2H0zM6,1H7V2H6zM8,1H9V2H8zM9,1H10V2H9zM10,1H11V2H10zM14,1H15V2H14zM16,1H17V2H16zM18,1H19V2H18zM24,1H25V2H24zM0,2H1V3H0zM2,2H3V3H2zM3,2H4V3H3zM4,2H5V3H4zM6,2H7V3H6zM10,2H11V3H10zM11,2H12V3H11zM12,2H13V3H12zM13,2H14V3H13zM15,2H16V3H15zM18,2H19V3H18zM20,2H21V3H20zM21,2H22V3H21zM22,2H23V3H22zM24,2H25V3H24zM0,3H1V4H0zM2,3H3V4H2zM3,3H4V4H3zM4,3H5V4H4zM6,3H7V4H6zM10,3H11V4H10zM11,3H12V4H11zM12,3H13V4H12zM13,3H14V4H13zM15,3H16V4H15zM18,3H19V4H18zM20,3H21V4H20zM21,3H22V4H21zM22,3H23V4H22zM24,3H25V4H24zM0,4H1V5H0zM2,4H3V5H2zM3,4H4V5H3zM4,4H5V5H4zM6,4H7V5H6zM8,4H9V5H8zM9,4H10V5H9zM10,4H11V5H10zM14,4H15V5H14zM18,4H19V5H18zM20,4H21V5H20zM21,4H22V5H21zM22,4H23V5H22zM24,4H25V5H24zM0,5H1V6H0zM6,5H7V6H6zM8,5H9V6H8zM13,5H14V6H13zM14,5H15V6H14zM18,5H19V6H18zM24,5H25V6H24zM0,6H1V7H0zM1,6H2V7H1zM2,6H3V7H2zM3,6H4V7H3zM4,6H5V7H4zM5,6H6V7H5zM6,6H7V7H6zM8,6H9V7H8zM10,6H11V7H10zM12,6H13V7H12zM14,6H15V7H14zM16,6H17V7H16zM18,6H19V7H18zM19,6H20V7H19zM20,6H21V7H20zM21,6H22V7H21zM22,6H23V7H22zM23,6H24V7H23zM24,6H25V7H24zM8,7H9V8H8zM10,7H11V8H10zM14,7H15V8H14zM15,7H16V8H15zM16,7H17V8H16zM0,8H1V9H0zM1,8H2V9H1zM2,8H3V9H2zM5,8H6V9H5zM6,8H7V9H6zM8,8H9V9H8zM9,8H10V9H9zM10,8H11V9H10zM11,8H12V9H11zM16,8H17V9H16zM17,8H18V9H17zM18,8H19V9H18zM19,8H20V9H19zM20,8H21V9H20zM23,8H24V9H23zM24,8H25V9H24zM0,9H1V10H0zM1,9H2V10H1zM4,9H5V10H4zM7,9H8V10H7zM8,9H9V10H8zM9,9H10V10H9zM10,9H11V10H10zM11,9H12V10H11zM12,9H13V10H12zM14,9H15V10H14zM15,9H16V10H15zM18,9H19V10H18zM19,9H20V10H19zM21,9H22V10H21zM23,9H24V10H23zM24,9H25V10H24zM0,10H1V11H0zM1,10H2V11H1zM2,10H3V11H2zM3,10H4V11H3zM5,10H6V11H5zM6,10H7V11H6zM8,10H9V11H8zM11,10H12V11H11zM12,10H13V11H12zM13,10H14V11H13zM15,10H16V11H15zM16,10H17V11H16zM18,10H19V11H18zM19,10H20V11H19zM21,10H22V11H21zM22,10H23V11H22zM24,10H25V11H24zM1,11H2V12H1zM2,11H3V12H2zM4,11H5V12H4zM5,11H6V12H5zM8,11H9V12H8zM9,11H10V12H9zM11,11H12V12H11zM12,11H13V12H12zM16,11H17V12H16zM17,11H18V12H17zM21,11H22V12H21zM1,12H2V13H1zM2,12H3V13H2zM3,12H4V13H3zM4,12H5V13H4zM5,12H6V13H5zM6,12H7V13H6zM9,12H10V13H9zM11,12H12V13H11zM15,12H16V13H15zM18,12H19V13H18zM24,12H25V13H24zM8,13H9V14H8zM11,13H12V14H11zM13,13H14V14H13zM14,13H15V14H14zM15,13H16V14H15zM16,13H17V14H16zM17,13H18V14H17zM18,13H19V14H18zM19,13H20V14H19zM23,13H24V14H23zM24,13H25V14H24zM0,14H1V15H0zM1,14H2V15H1zM2,14H3V15H2zM4,14H5V15H4zM5,14H6V15H5zM6,14H7V15H6zM7,14H8V15H7zM8,14H9V15H8zM9,14H10V15H9zM10,14H11V15H10zM11,14H12V15H11zM14,14H15V15H14zM15,14H16V15H15zM18,14H19V15H18zM21,14H22V15H21zM22,14H23V15H22zM24,14H25V15H24zM2,15H3V16H2zM4,15H5V16H4zM9,15H10V16H9zM12,15H13V16H12zM16,15H17V16H16zM18,15H19V16H18zM19,15H20V16H19zM20,15H21V16H20zM21,15H22V16H21zM0,16H1V17H0zM1,16H2V17H1zM3,16H4V17H3zM6,16H7V17H6zM7,16H8V17H7zM8,16H9V17H8zM11,16H12V17H11zM12,16H13V17H12zM15,16H16V17H15zM16,16H17V17H16zM17,16H18V17H17zM18,16H19V17H18zM19,16H20V17H19zM20,16H21V17H20zM23,16H24V17H23zM8,17H9V18H8zM11,17H12V18H11zM12,17H13V18H12zM14,17H15V18H14zM15,17H16V18H15zM16,17H17V18H16zM20,17H21V18H20zM24,17H25V18H24zM0,18H1V19H0zM1,18H2V19H1zM2,18H3V19H2zM3,18H4V19H3zM4,18H5V19H4zM5,18H6V19H5zM6,18H7V19H6zM9,18H10V19H9zM10,18H11V19H10zM11,18H12V19H11zM16,18H17V19H16zM18,18H19V19H18zM20,18H21V19H20zM24,18H25V19H24zM0,19H1V20H0zM6,19H7V20H6zM8,19H9V20H8zM10,19H11V20H10zM11,19H12V20H11zM12,19H13V20H12zM15,19H16V20H15zM16,19H17V20H16zM20,19H21V20H20zM23,19H24V20H23zM0,20H1V21H0zM2,20H3V21H2zM3,20H4V21H3zM4,20H5V21H4zM6,20H7V21H6zM10,20H11V21H10zM12,20H13V21H12zM15,20H16V21H15zM16,20H17V21H16zM17,20H18V21H17zM18,20H19V21H18zM19,20H20V21H19zM20,20H21V21H20zM0,21H1V22H0zM2,21H3V22H2zM3,21H4V22H3zM4,21H5V22H4zM6,21H7V22H6zM9,21H10V22H9zM11,21H12V22H11zM12,21H13V22H12zM17,21H18V22H17zM20,21H21V22H20zM22,21H23V22H22zM23,21H24V22H23zM0,22H1V23H0zM2,22H3V23H2zM3,22H4V23H3zM4,22H5V23H4zM6,22H7V23H6zM8,22H9V23H8zM9,22H10V23H9zM10,22H11V23H10zM11,22H12V23H11zM12,22H13V23H12zM13,22H14V23H13zM17,22H18V23H17zM19,22H20V23H19zM20,22H21V23H20zM21,22H23V23H21zM23,22H24V23H23zM24,22H25V23H24zM0,23H1V24H0zM6,23H7V24H6zM8,23H9V24H8zM12,23H13V24H12zM14,23H15V24H14zM16,23H17V24H16zM17,23H18V24H17zM18,23H19V24H18zM19,23H20V24H19zM20,23H21V24H20zM0,24H1V25H0zM1,24H2V25H1zM2,24H3V25H2zM3,24H4V25H3zM4,24H5V25H4zM5,24H6V25H5zM6,24H7V25H6zM8,24H9V25H8zM9,24H10V25H9zM11,24H12V25H11zM16,24H17V25H16zM21,24H22V25H21zM24,24H25V25H24z" fill="#111" fill-opacity="1" fill-rule="nonzero" stroke="none"/></svg>
+                    </div>
+                </div>
+            </div>
+            <p style="text-align:center; font-size:10px; color:var(--text-muted); margin-top:12px; line-height:1.5;"
+               data-bg="Zamunda BG е безплатен проект. Дарението е доброволно и не гарантира допълнителни функции или поддръжка."
+               data-en="Zamunda BG is a free project. Donations are voluntary and do not guarantee additional features or support."></p>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════ -->
+    <!-- TAB: Changelog                      -->
+    <!-- ═══════════════════════════════════ -->
+    <div class="tab-content" id="tab-changelog">
+
+        <div class="changelog-entry">
+            <div class="changelog-header">
+                <span class="changelog-version">v2.1.0</span>
+                <span class="changelog-tag tag-new" data-bg="НОВО" data-en="NEW">НОВО</span>
+                <span class="changelog-date">2026-05-07</span>
+            </div>
+            <div class="changelog-body">
+                <ul>
+                    <li data-bg="Собствен платен сървър — без повече заспиване и бавно зареждане" data-en="Dedicated paid server — no more sleeping and slow loading"></li>
+                    <li data-bg="Нов дизайн на страницата за инсталиране" data-en="New install page design"></li>
+                    <li data-bg="Статистика на живо" data-en="Live stats"></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="changelog-entry">
+            <div class="changelog-header">
+                <span class="changelog-version">v2.0.3</span>
+                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-date">2026-05-05</span>
+            </div>
+            <div class="changelog-body">
+                <ul>
+                    <li data-bg="По-добро разпознаване на епизоди при пакетни торенти" data-en="Better episode matching in season pack torrents"></li>
+                    <li data-bg="Подобрен BG аудио филтър — по-малко фалшиви miss-ове" data-en="Improved BG audio filter — fewer false misses"></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="changelog-entry">
+            <div class="changelog-header">
+                <span class="changelog-version">v2.0.2</span>
+                <span class="changelog-tag tag-improved" data-bg="ОПТИМИЗАЦИЯ" data-en="OPTIMIZATION">ОПТИМИЗАЦИЯ</span>
+                <span class="changelog-date">2026-04-28</span>
+            </div>
+            <div class="changelog-body">
+                <ul>
+                    <li data-bg="Оптимизирано търсене — по-бързи резултати при популярни заглавия" data-en="Optimized search — faster results for popular titles"></li>
+                    <li data-bg="Fix за дублирани резултати при някои сериали" data-en="Fix for duplicate results on some series"></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="changelog-entry">
+            <div class="changelog-header">
+                <span class="changelog-version">v2.0.1</span>
+                <span class="changelog-tag tag-fix" data-bg="КОРЕКЦИЯ" data-en="PATCH">КОРЕКЦИЯ</span>
+                <span class="changelog-date">2026-04-22</span>
+            </div>
+            <div class="changelog-body">
+                <ul>
+                    <li data-bg="Fix за anime заглавия с абсолютна номерация (Detective Conan, One Piece)" data-en="Fix for anime titles with absolute numbering (Detective Conan, One Piece)"></li>
+                    <li data-bg="Подобрена обработка на timeout при Real-Debrid" data-en="Improved Real-Debrid timeout handling"></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="changelog-entry">
+            <div class="changelog-header">
+                <span class="changelog-version">v2.0.0</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНО" data-en="IMPROVED">ПОДОБРЕНО</span>
+                <span class="changelog-date">2026-04-18</span>
+            </div>
+            <div class="changelog-body">
+                <ul>
+                    <li data-bg="Real-Debrid & TorBox интеграция" data-en="Real-Debrid & TorBox integration"></li>
+                    <li data-bg="БГ аудио филтър с fallback" data-en="BG audio filter with fallback"></li>
+                    <li data-bg="Филтри за качество и размер" data-en="Quality and size filters"></li>
+                    <li data-bg="Анимe разпознаване (абсолютни епизоди)" data-en="Anime recognition (absolute episodes)"></li>
+                    <li data-bg="Статистика и логове в Upstash Redis" data-en="Stats and logs in Upstash Redis"></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="changelog-entry">
+            <div class="changelog-header">
+                <span class="changelog-version">v1.0.0</span>
+                <span class="changelog-tag tag-new" data-bg="СТАРТ" data-en="LAUNCH">СТАРТ</span>
+                <span class="changelog-date">2026-03-15</span>
+            </div>
+            <div class="changelog-body">
+                <ul>
+                    <li data-bg="Търсене в Zamunda + ArenaBG + Zelka" data-en="Search across Zamunda + ArenaBG + Zelka"></li>
+                    <li data-bg="P2P торент стрийминг" data-en="P2P torrent streaming"></li>
+                    <li data-bg="Двуезичен интерфейс (BG/EN)" data-en="Bilingual interface (BG/EN)"></li>
+                </ul>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Footer -->
+    <div class="footer">
+        <span data-bg="Направено с" data-en="Made with"></span> ❤️
+        <span data-bg="за BG Stremio общността" data-en="for the BG Stremio community"></span>
+    </div>
+</div>
+
+<script>
+let currentLang = 'bg';
+
+function setLang(lang) {
+    currentLang = lang;
+    document.getElementById('langBG').classList.toggle('active', lang === 'bg');
+    document.getElementById('langEN').classList.toggle('active', lang === 'en');
+    document.querySelectorAll('[data-bg]').forEach(el => {
+        const val = el.getAttribute('data-' + lang);
+        if (val) el.textContent = val;
+    });
+    document.querySelectorAll('select option').forEach(opt => {
+        const val = opt.getAttribute('data-' + lang);
+        if (val) opt.textContent = val;
+    });
+    document.querySelectorAll('[data-bg-placeholder]').forEach(el => {
+        el.placeholder = el.getAttribute('data-' + lang + '-placeholder');
+    });
+}
+
+function switchTab(name) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    event.target.classList.add('active');
+    document.getElementById('tab-' + name).classList.add('active');
+}
+
+function selectDebrid(value) {
+    document.querySelectorAll('.radio-card').forEach(c => c.classList.remove('selected'));
+    const cardId = value === 'realdebrid' ? 'card-rd' : value === 'torbox' ? 'card-tb' : 'card-p2p';
+    document.getElementById(cardId).classList.add('selected');
+    document.querySelector('input[name="debrid"][value="' + value + '"]').checked = true;
+    document.getElementById('rdTokenRow').classList.toggle('visible', value === 'realdebrid');
+    document.getElementById('tbTokenRow').classList.toggle('visible', value === 'torbox');
+    document.getElementById('debridModeRow').classList.toggle('visible', value === 'realdebrid' || value === 'torbox');
+}
+
+// Chip toggle
+document.querySelectorAll('.check-group').forEach(group => {
+    const mode = group.dataset.mode;
+    group.querySelectorAll('.chip').forEach(chip => {
+        chip.addEventListener('click', (e) => {
+            e.preventDefault(); e.stopPropagation();
+            if (mode === 'radio') {
+                group.querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
+                chip.classList.add('on');
+            } else {
+                chip.classList.toggle('on');
+                if (!group.querySelector('.chip.on')) chip.classList.add('on');
+            }
+        });
+    });
+});
+
+function getSelected(groupId) {
+    return Array.from(document.querySelectorAll('#' + groupId + ' .chip.on')).map(c => c.dataset.value);
+}
+
+function buildConfigString() {
+    const parts = [];
+    const debrid = document.querySelector('input[name="debrid"]:checked').value;
+    parts.push('debrid=' + debrid);
+    if (debrid === 'realdebrid') {
+        const token = document.getElementById('rdToken').value.trim();
+        if (token) parts.push('rdtoken=' + token);
+    }
+    if (debrid === 'torbox') {
+        const token = document.getElementById('tbToken').value.trim();
+        if (token) parts.push('tbtoken=' + token);
+    }
+    if (debrid === 'realdebrid' || debrid === 'torbox') {
+        const mode = getSelected('debridModeGroup');
+        if (mode[0] && mode[0] !== 'guaranteed') parts.push('debridmode=' + mode[0]);
+    }
+    const content = getSelected('contentGroup');
+    parts.push('content=' + content[0]);
+    const qualities = getSelected('qualityGroup');
+    if (qualities.length > 0 && qualities.length < 4) parts.push('quality=' + qualities.join(','));
+    const sort = document.getElementById('sortSelect').value;
+    if (sort !== 'quality') parts.push('sort=' + sort);
+    const sizeLimit = document.getElementById('sizeLimit').value.trim();
+    if (sizeLimit) parts.push('sizelimit=' + sizeLimit);
+    parts.push('lang=' + currentLang);
+    return parts.join('|');
+}
+
+function getManifestUrl() {
+    const debrid = document.querySelector('input[name="debrid"]:checked').value;
+    if (debrid === 'realdebrid') {
+        const token = document.getElementById('rdToken').value.trim();
+        if (!token) { alert(currentLang === 'bg' ? 'Въведи Real-Debrid token' : 'Enter Real-Debrid token'); return null; }
+        if (token.length < 20) { alert(currentLang === 'bg' ? 'Token-ът изглежда невалиден' : 'Token looks invalid'); return null; }
+    }
+    if (debrid === 'torbox') {
+        const token = document.getElementById('tbToken').value.trim();
+        if (!token) { alert(currentLang === 'bg' ? 'Въведи TorBox token' : 'Enter TorBox token'); return null; }
+        if (token.length < 10) { alert(currentLang === 'bg' ? 'Token-ът изглежда невалиден' : 'Token looks invalid'); return null; }
+    }
+    return window.location.origin + '/' + encodeURIComponent(buildConfigString()) + '/manifest.json';
+}
+
+function install() {
+    const url = getManifestUrl();
+    if (!url) return;
+    window.location.href = url.replace(/^https?:/, 'stremio:');
+}
+
+function copyUrl() {
+    const url = getManifestUrl();
+    if (!url) return;
+    navigator.clipboard.writeText(url).then(() => {
+        const div = document.getElementById('manifestUrl');
+        div.textContent = url;
+        div.style.display = 'block';
+    });
+}
+
+// Load live stats
+function formatNum(n) {
+    if (n >= 1000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'K';
+    return n.toString();
+}
+
+fetch('/stats')
+    .then(r => r.json())
+    .then(s => {
+        document.getElementById('statUsers').textContent = s.uniqueUsers + '+';
+        document.getElementById('statStreams').textContent = formatNum(s.streamRequests) + '+';
+        document.getElementById('statUsersHeader').textContent = s.uniqueUsers + '+';
+        document.getElementById('statStreamsHeader').textContent = formatNum(s.streamRequests) + '+';
+    })
+    .catch(() => {});
+
+setLang('bg');
+</script>
+</body>
+</html>
