@@ -1,17 +1,20 @@
 const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
+const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
 app.use(cors());
 const PORT = process.env.PORT || 7000;
+const DASHBOARD_KEY = process.env.DASHBOARD_KEY || 'zmbg2026';
+const PROXY_API_KEY = '949b475e3b8f0f213584006545a619efb26a2216603edeb0';
 
 // =====================================================
 // CONFIG
 // =====================================================
-const ZAMUNDA_API = 'https://zamunda.rip/api/torrents';
+const ZAMUNDA_API = 'https://api-proxy.tzkppv.com';
 const CINEMETA_API = 'https://v3-cinemeta.strem.io/meta';
 const RD_API = 'https://api.real-debrid.com/rest/1.0';
 const TB_API = 'https://api.torbox.app/v1';
@@ -22,11 +25,47 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 function getCached(key) {
     const c = cache.get(key);
     if (c && Date.now() - c.time < CACHE_TTL) return c.data;
+    if (c) cache.delete(key);
     return null;
 }
 function setCached(key, data) {
     cache.set(key, { data, time: Date.now() });
 }
+// Daily stats — per-day counters using Redis INCR
+function todayKey() { return new Date().toISOString().substring(0, 10); }
+function incrDaily(metric) { return redisCmd('INCR', `zamunda:daily:${todayKey()}:${metric}`); }
+async function getDailyCount(date, metric) { return Number(await redisCmd('GET', `zamunda:daily:${date}:${metric}`)) || 0; }
+
+// Snapshot totals daily (for users/migrated/new which are sets, not counters)
+let lastSnapshotDate = '';
+async function dailySnapshot() {
+    const today = todayKey();
+    if (today === lastSnapshotDate) return;
+    lastSnapshotDate = today;
+    const [users, migrated, newU] = await Promise.all([
+        scard('users'), scard('migratedUsers'), scard('newUsers'),
+    ]);
+    const snap = JSON.stringify({
+        date: today,
+        totalUsers: Number(users || 0),
+        migrated: Number(migrated || 0),
+        newUsers: Number(newU || 0),
+    });
+    await hset('dailyStats', today, snap);
+    console.log(`📊 Daily snapshot saved: ${today}`);
+}
+setInterval(dailySnapshot, 60 * 60 * 1000);
+setTimeout(dailySnapshot, 5000);
+
+// Evict stale cache entries every 10 minutes
+setInterval(() => {
+    const now = Date.now();
+    let evicted = 0;
+    for (const [key, val] of cache) {
+        if (now - val.time >= CACHE_TTL) { cache.delete(key); evicted++; }
+    }
+    if (evicted > 0) console.log(`🧹 Cache eviction: ${evicted} stale entries removed, ${cache.size} remaining`);
+}, 10 * 60 * 1000);
 
 // =====================================================
 // STATS — persisted in Upstash Redis
@@ -47,6 +86,8 @@ async function redisCmd(...args) {
 
 async function incr(key) { return redisCmd('INCR', `zamunda:${key}`); }
 async function sadd(key, val) { return redisCmd('SADD', `zamunda:${key}`, val); }
+async function hset(key, field, val) { return redisCmd('HSET', `zamunda:${key}`, field, String(val)); }
+async function hgetall(key) { return redisCmd('HGETALL', `zamunda:${key}`); }
 async function scard(key) { return redisCmd('SCARD', `zamunda:${key}`); }
 async function getCount(key) { return (await redisCmd('GET', `zamunda:${key}`)) || 0; }
 
@@ -88,7 +129,9 @@ function parseConfig(configStr) {
 }
 
 function configFingerprint(config) {
-    return `${config.debrid}:${config.content}:${config.quality}:${config.sort}:${config.sources}:${config.sizelimit}`;
+    const token = config.rdtoken || config.tbtoken || '';
+    const tokenHash = token ? crypto.createHash('md5').update(token).digest('hex').substring(0, 8) : 'none';
+    return `${config.debrid}:${tokenHash}:${config.content}:${config.quality}:${config.sort}:${config.sources}:${config.sizelimit}`;
 }
 
 // =====================================================
@@ -98,7 +141,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.1.0',
+        version: '2.1.1',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda.RIP архива (${mode} режим)`
@@ -146,7 +189,7 @@ async function searchZamunda(query) {
         const res = await axios.get(ZAMUNDA_API, {
             params: { q: query, limit: 50 },
             timeout: 10000,
-            headers: { 'User-Agent': 'Mozilla/5.0 ZamundaStremio/1.0' }
+            headers: { 'User-Agent': 'Mozilla/5.0 ZamundaStremio/1.0', 'X-Api-Key': PROXY_API_KEY }
         });
         const data = res.data || [];
         setCached(key, data);
@@ -280,6 +323,72 @@ function extractInfohash(magnet) {
     return m ? m[1].toLowerCase() : null;
 }
 
+
+// =====================================================
+// BENCODE + FILE INDEX RESOLUTION
+// =====================================================
+function decodeBencode(buf, pos = 0, depth = 0) {
+    if (depth > 20 || pos >= buf.length) return [null, buf.length];
+    const ch = buf[pos];
+    if (ch === 0x69) { // 'i' — integer
+        const end = buf.indexOf(0x65, pos + 1);
+        if (end === -1) return [null, buf.length];
+        return [parseInt(buf.slice(pos + 1, end).toString()), end + 1];
+    }
+    if (ch === 0x6C) { // 'l' — list
+        const list = []; pos++;
+        while (pos < buf.length && buf[pos] !== 0x65) { const [v, np] = decodeBencode(buf, pos, depth + 1); list.push(v); pos = np; }
+        return [list, Math.min(pos + 1, buf.length)];
+    }
+    if (ch === 0x64) { // 'd' — dict
+        const dict = {}; pos++;
+        while (pos < buf.length && buf[pos] !== 0x65) {
+            const [k, kp] = decodeBencode(buf, pos, depth + 1);
+            const [v, vp] = decodeBencode(buf, kp, depth + 1);
+            if (k !== null) dict[k.toString()] = v; pos = vp;
+        }
+        return [dict, Math.min(pos + 1, buf.length)];
+    }
+    // string — length:data
+    const colon = buf.indexOf(0x3A, pos);
+    if (colon === -1 || colon > pos + 10) return [null, buf.length];
+    const len = parseInt(buf.slice(pos, colon).toString());
+    if (isNaN(len) || len < 0 || colon + 1 + len > buf.length) return [null, buf.length];
+    const str = buf.slice(colon + 1, colon + 1 + len);
+    return [str, colon + 1 + len];
+}
+
+async function resolveFileIdx(infohash, season, episode) {
+    try {
+        const res = await axios.get(
+            `https://itorrents.org/torrent/${infohash}.torrent`,
+            { responseType: 'arraybuffer', timeout: 5000, maxRedirects: 3 }
+        );
+        const [torrent] = decodeBencode(Buffer.from(res.data));
+        const info = torrent.info || torrent['info'];
+        if (!info || !info.files) return null;
+
+        const s = String(season).padStart(2, '0');
+        const e = String(episode).padStart(2, '0');
+        const pattern = new RegExp(`S${s}E${e}\\b`, 'i');
+
+        const videoExts = /\.(mkv|mp4|avi|mov|m4v|ts|webm)$/i;
+        let videoIdx = 0;
+        for (let i = 0; i < info.files.length; i++) {
+            const path = (info.files[i].path || []).map(p => p.toString()).join('/');
+            if (!videoExts.test(path)) continue;
+            if (pattern.test(path)) {
+                console.log(`  📁 fileIdx ${videoIdx} → ${path}`);
+                return videoIdx;
+            }
+            videoIdx++;
+        }
+        return null;
+    } catch (e) {
+        console.error('  ⚠️ fileIdx resolve failed:', e.message);
+        return null;
+    }
+}
 
 // =====================================================
 // REAL-DEBRID
@@ -554,7 +663,26 @@ async function resolveStreams(type, fullId, config) {
                 console.log(`  ${fallback.length} fallback (no season/ep info)`);
                 allTorrents = fallback;
             } else {
-                logEvent('MISS', `${label} — ${beforeCount} torrents but 0 episode matches`);
+                // Categorize WHY no episodes matched — helps debugging
+                const seasons = new Set();
+                const episodes = new Set();
+                allTorrents.forEach(t => {
+                    const u = t.title.toUpperCase();
+                    const sm = u.match(/S(\d+)/g);
+                    if (sm) sm.forEach(s => seasons.add(parseInt(s.slice(1))));
+                    const em = u.match(/S\d+E(\d+)/g);
+                    if (em) em.forEach(e => episodes.add(parseInt(e.match(/E(\d+)/)[1])));
+                });
+                let detail = '';
+                if (seasons.size > 0 && !seasons.has(season)) {
+                    const avail = [...seasons].sort((a, b) => a - b).map(s => `S${String(s).padStart(2, '0')}`).join(',');
+                    detail = ` (available: ${avail})`;
+                } else if (episodes.size > 0 && !episodes.has(episode)) {
+                    const maxEp = Math.max(...episodes);
+                    detail = ` (latest: E${String(maxEp).padStart(2, '0')})`;
+                }
+                const titles = allTorrents.slice(0, 3).map(t => t.title.substring(0, 80));
+                logEvent('MISS', `${label} — ${beforeCount} torrents but 0 episode matches${detail} [${titles.join(' | ')}]`);
                 return [];
             }
         }
@@ -564,7 +692,8 @@ async function resolveStreams(type, fullId, config) {
     let filtered = applyFilters(allTorrents, config, type);
     console.log(`  ${filtered.length} after filters`);
     if (filtered.length === 0) {
-        logEvent('MISS', `${label} — ${allTorrents.length} torrents but 0 after filters (${config.content}|${config.quality})`);
+        const sampleTitles = allTorrents.slice(0, 3).map(t => t.title.substring(0, 80));
+        logEvent('MISS', `${label} — ${allTorrents.length} torrents but 0 after filters (${config.content}|${config.quality}) [${sampleTitles.join(' | ')}]`);
 
         // If BG audio filter is the reason, fall back to showing all results with a hint
         if (config.content === 'bgaudio' && allTorrents.length > 0) {
@@ -580,7 +709,22 @@ async function resolveStreams(type, fullId, config) {
                 return [];
             }
         } else {
-            return [];
+            // Quality filter fallback — if quality filter killed everything, show all qualities with a warning
+            const qualities = config.quality.split(',').map(q => q.trim().toLowerCase());
+            const allQualities = qualities.length >= 4;
+            if (!allQualities && allTorrents.length > 0) {
+                logEvent('QUALFILTER', `${label} — no ${config.quality} results, falling back to all qualities (${allTorrents.length} torrents)`);
+                const fallbackConfig = { ...config, quality: '4k,1080p,720p,sd' };
+                filtered = applyFilters(allTorrents, fallbackConfig, type);
+                filtered = sortTorrents(filtered, fallbackConfig);
+                if (filtered.length > 0) {
+                    config._qualityFallback = true;
+                } else {
+                    return [];
+                }
+            } else {
+                return [];
+            }
         }
     }
 
@@ -610,6 +754,16 @@ async function resolveStreams(type, fullId, config) {
         behaviorHints: { notWebReady: true }
     }] : [];
 
+    // Quality fallback hint — prepended to results when quality filter found no matching quality
+    const qualHint = config._qualityFallback ? [{
+        name: `⚠️ Няма ${config.quality}\nZamunda BG`,
+        title: `Няма торенти в избраното качество.\nПоказваме всички ${filtered.length} резултата.`,
+        externalUrl: 'https://zamunda-stremio.tzkppv.com',
+        behaviorHints: { notWebReady: true }
+    }] : [];
+
+    const hints = [...bgHint, ...qualHint];
+
     // ---- TORBOX MODE ----
     if (hasTB) {
         console.log(`  TorBox mode (${debridMode}): checking ${filtered.length} torrents...`);
@@ -636,12 +790,12 @@ async function resolveStreams(type, fullId, config) {
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${tbStreams.length} TB + ${p2pStreams.length} P2P in ${elapsed}s`);
             logEvent('TB', `${tbStreams.length} TB + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
-            return [...bgHint, ...tbStreams, ...p2pStreams];
+            return [...hints, ...tbStreams, ...p2pStreams];
         }
 
         console.log(`  → ${tbStreams.length} playable in ${elapsed}s`);
         logEvent('TB', `${tbStreams.length} playable in ${elapsed}s — "${meta.name}"`);
-        return [...bgHint, ...tbStreams];
+        return [...hints, ...tbStreams];
     }
 
     // ---- RD MODE ----
@@ -665,18 +819,18 @@ async function resolveStreams(type, fullId, config) {
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s`);
             logEvent('RD', `${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
-            return [...bgHint, ...rdStreams, ...p2pStreams];
+            return [...hints, ...rdStreams, ...p2pStreams];
         }
 
         console.log(`  → ${rdStreams.length} playable in ${elapsed}s`);
         logEvent('RD', `${rdStreams.length} playable in ${elapsed}s — "${meta.name}"`);
-        return [...bgHint, ...rdStreams];
+        return [...hints, ...rdStreams];
     }
 
     // ---- P2P MODE ----
     console.log(`  P2P mode: returning ${filtered.length} streams`);
     logEvent('P2P', `${filtered.length} streams — "${meta.name}"`);
-    return [...bgHint, ...filtered.map(torrent => buildStream(torrent, null, 'p2p'))];
+    return [...hints, ...filtered.map(torrent => buildStream(torrent, null, 'p2p'))];
 }
 
 function buildStream(torrent, url, mode) {
@@ -720,395 +874,11 @@ function buildStream(torrent, url, mode) {
 }
 
 // =====================================================
-// CONFIG PAGE HTML
+// EXPRESS ROUTES (configPageHTML removed — served from config.html)
 // =====================================================
-function configPageHTML() {
-    // SVG icon helpers (inline, no emoji)
-    const icons = {
-        satellite: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 7L9 3 3 9l4 4"/><path d="m11 15 4 4 6-6-4-4"/><path d="m8 12 4 4"/><path d="m16 8-4-4"/><circle cx="18" cy="18" r="3"/><path d="M2 22c3-6 6-9 12-12"/></svg>',
-        film: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2" width="20" height="20" rx="2.18" ry="2.18"/><line x1="7" y1="2" x2="7" y2="22"/><line x1="17" y1="2" x2="17" y2="22"/><line x1="2" y1="12" x2="22" y2="12"/><line x1="2" y1="7" x2="7" y2="7"/><line x1="2" y1="17" x2="7" y2="17"/><line x1="17" y1="7" x2="22" y2="7"/><line x1="17" y1="17" x2="22" y2="17"/></svg>',
-        monitor: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
-        folder: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>',
-        shuffle: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"/><line x1="4" y1="20" x2="21" y2="3"/><polyline points="21 16 21 21 16 21"/><line x1="15" y1="15" x2="21" y2="21"/><line x1="4" y1="4" x2="9" y2="9"/></svg>',
-        box: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>',
-    };
-    return `<!DOCTYPE html>
-<html lang="bg">
-<head>
-    <meta charset="UTF-8">
-    <title>Zamunda BG — Stremio Addon</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-               background: #0a0a0a; color: #e8e8e8; min-height: 100vh; padding: 20px; }
-        .wrap { max-width: 640px; margin: 0 auto; }
-
-        .header { text-align: center; margin-bottom: 30px; }
-        .logo { font-size: 56px; margin-bottom: 8px; }
-        h1 { font-size: 32px; margin-bottom: 4px; color: #f5d020; }
-        .subtitle { opacity: 0.5; font-size: 14px; }
-
-        .lang-toggle { position: fixed; top: 16px; right: 16px; display: flex; gap: 4px;
-                       background: #1a1a1a; border: 1px solid #2a2a2a; border-radius: 8px; padding: 3px; z-index: 100; }
-        .lang-btn { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer;
-                    font-size: 13px; font-weight: 600; background: transparent; color: #666;
-                    transition: all 0.2s; }
-        .lang-btn.active { background: rgba(245,208,32,0.15); color: #f5d020; }
-
-        .section { background: #111; border: 1px solid #1e1e1e; border-radius: 12px;
-                   padding: 20px; margin-bottom: 16px; }
-        .section-title { font-size: 15px; font-weight: 700; margin-bottom: 12px;
-                         display: flex; align-items: center; gap: 8px; color: #ccc; }
-        .section-title .icon { display: flex; align-items: center; color: #f5d020; }
-
-        .radio-cards { display: flex; gap: 10px; }
-        .radio-card { flex: 1; padding: 14px; border-radius: 10px; cursor: pointer;
-                      border: 2px solid #1e1e1e; transition: all 0.2s; }
-        .radio-card:hover { border-color: #333; }
-        .radio-card.selected { border-color: #f5d020; background: rgba(245,208,32,0.04); }
-        .radio-card input { display: none; }
-        .radio-card .card-title { font-weight: 700; font-size: 15px; margin-bottom: 6px;
-                                  display: flex; align-items: center; gap: 6px; }
-        .radio-card .card-desc { font-size: 12px; opacity: 0.5; line-height: 1.5; }
-        .badge { font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 700; text-transform: uppercase; }
-        .badge-free { background: rgba(76,175,80,0.15); color: #66bb6a; }
-        .badge-premium { background: rgba(245,208,32,0.15); color: #f5d020; }
-
-        .token-row { margin-top: 12px; display: none; }
-        .token-row.visible { display: block; }
-        .token-row label { font-size: 13px; font-weight: 600; margin-bottom: 6px; display: block; color: #999; }
-        .token-row input { width: 100%; padding: 11px 14px; background: #0a0a0a;
-                          border: 1px solid #2a2a2a; border-radius: 8px;
-                          color: #f5d020; font-family: monospace; font-size: 13px; }
-        .token-row input:focus { outline: none; border-color: #f5d020; }
-        .token-help { font-size: 11px; opacity: 0.4; margin-top: 6px; }
-        .token-help a { color: #f5d020; text-decoration: none; }
-
-        .check-group { display: flex; flex-wrap: wrap; gap: 8px; }
-        .chip { padding: 8px 16px; border-radius: 20px; cursor: pointer; font-size: 13px;
-                border: 1px solid #2a2a2a; transition: all 0.15s; user-select: none;
-                font-weight: 500; color: #888; background: #0a0a0a; }
-        .chip:hover { border-color: #444; color: #bbb; }
-        .chip.on { border-color: #f5d020; background: rgba(245,208,32,0.08); color: #f5d020; }
-
-        select { width: 100%; padding: 11px 14px; background: #0a0a0a; border: 1px solid #2a2a2a;
-                 border-radius: 8px; color: #e8e8e8; font-size: 13px; appearance: none;
-                 background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%23666'%3E%3Cpath d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-                 background-repeat: no-repeat; background-position: right 14px center; }
-        select:focus { outline: none; border-color: #f5d020; }
-        select option { background: #111; color: #e8e8e8; }
-
-        .size-row { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
-        .size-input { flex: 1; padding: 11px 14px; background: #0a0a0a; border: 1px solid #2a2a2a;
-                     border-radius: 8px; color: #e8e8e8; font-family: monospace; font-size: 13px; }
-        .size-input:focus { outline: none; border-color: #f5d020; }
-        .hint { font-size: 11px; opacity: 0.35; margin-top: 8px; line-height: 1.5; }
-
-        .install-section { margin-top: 24px; }
-        .btn-row { display: flex; gap: 10px; }
-        .btn { flex: 1; padding: 15px 20px; border: none; border-radius: 10px; font-size: 15px;
-               font-weight: 700; cursor: pointer; transition: all 0.2s; text-align: center; }
-        .btn:hover { transform: translateY(-2px); }
-        .btn-primary { background: #f5d020; color: #000; }
-        .btn-primary:hover { background: #ffd83d; }
-        .btn-secondary { background: #1a1a1a; color: #ccc; border: 1px solid #2a2a2a; }
-        .btn-secondary:hover { border-color: #444; }
-        #manifestUrl { font-family: monospace; font-size: 11px; background: #0a0a0a;
-                      border: 1px solid #1e1e1e; padding: 12px; border-radius: 8px;
-                      margin-top: 12px; word-break: break-all; display: none;
-                      line-height: 1.5; color: #f5d020; }
-
-        .footer { text-align: center; margin-top: 24px; font-size: 12px; opacity: 0.25; }
-        .footer a { color: #f5d020; text-decoration: none; }
-
-        @media (max-width: 500px) {
-            .radio-cards { flex-direction: column; }
-            .lang-toggle { position: static; justify-content: center; margin-bottom: 16px; }
-        }
-    </style>
-</head>
-<body>
-<div class="lang-toggle">
-    <button class="lang-btn active" onclick="setLang('bg')" id="langBG">BG</button>
-    <button class="lang-btn" onclick="setLang('en')" id="langEN">EN</button>
-</div>
-<div class="wrap">
-    <div class="header">
-        <div class="logo"><img src="https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png" alt="Zamunda BG" style="width:64px;height:64px;border-radius:12px;"></div>
-        <h1>Zamunda BG</h1>
-        <p class="subtitle" data-bg="Stremio addon — филми и сериали от Zamunda.RIP" data-en="Stremio addon — movies & series from Zamunda.RIP"></p>
-    </div>
-
-    <!-- DEBRID -->
-    <div class="section">
-        <div class="section-title">
-            <span class="icon">${icons.satellite}</span>
-            <span data-bg="Streaming метод" data-en="Streaming method"></span>
-        </div>
-        <div class="radio-cards">
-            <label class="radio-card selected" id="card-p2p" onclick="selectDebrid('none')">
-                <input type="radio" name="debrid" value="none" checked>
-                <div class="card-title">
-                    P2P <span class="badge badge-free" data-bg="Безплатно" data-en="Free"></span>
-                </div>
-                <div class="card-desc" data-bg="Директен torrent streaming. Не изисква акаунт. Скоростта зависи от seeders — популярни филми вървят добре, по-стари може да буферират."
-                     data-en="Direct torrent streaming. No account needed. Speed depends on seeders — popular movies work great, older ones may buffer."></div>
-            </label>
-            <label class="radio-card" id="card-rd" onclick="selectDebrid('realdebrid')">
-                <input type="radio" name="debrid" value="realdebrid">
-                <div class="card-title">
-                    Real-Debrid <span class="badge badge-premium" data-bg="Премиум" data-en="Premium"></span>
-                </div>
-                <div class="card-desc" data-bg="Моментално пускане без буфериране. Показва само torrents с гарантиран playback. Изисква Real-Debrid абонамент (~3\u20AC/месец). Списъкът се зарежда по-бавно (~10-15 сек), защото проверява кои торенти са кеширани."
-                     data-en="Instant playback, zero buffering. Only shows torrents with guaranteed playback. Requires Real-Debrid subscription (~3\u20AC/month). Stream list loads slower (~10-15 sec) as it checks which torrents are cached."></div>
-            </label>
-            <label class="radio-card" id="card-tb" onclick="selectDebrid('torbox')">
-                <input type="radio" name="debrid" value="torbox">
-                <div class="card-title">
-                    TorBox <span class="badge badge-premium" data-bg="Премиум" data-en="Premium"></span>
-                </div>
-                <div class="card-desc" data-bg="Моментално пускане без буфериране. Бърза проверка на кеш (~2-3 сек). Изисква TorBox абонамент."
-                     data-en="Instant playback, zero buffering. Fast cache check (~2-3 sec). Requires TorBox subscription."></div>
-            </label>
-        </div>
-        <!-- RD Token -->
-        <div class="token-row" id="rdTokenRow">
-            <label data-bg="Real-Debrid API Token" data-en="Real-Debrid API Token"></label>
-            <input type="text" id="rdToken" placeholder="ABCDEFGHIJKLMNOP1234567890...">
-            <div class="token-help">
-                <span data-bg="Вземи от" data-en="Get it from"></span>
-                <a href="https://real-debrid.com/apitoken" target="_blank">real-debrid.com/apitoken</a>
-            </div>
-        </div>
-        <!-- TorBox Token -->
-        <div class="token-row" id="tbTokenRow">
-            <label data-bg="TorBox API Token" data-en="TorBox API Token"></label>
-            <input type="text" id="tbToken" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx">
-            <div class="token-help">
-                <span data-bg="Вземи от" data-en="Get it from"></span>
-                <a href="https://torbox.app/settings" target="_blank">torbox.app/settings</a>
-            </div>
-        </div>
-        <!-- Debrid mode (shared by RD and TB) -->
-        <div class="token-row" id="debridModeRow">
-            <div style="margin-top: 4px;">
-                <label style="font-size:13px; font-weight:600; margin-bottom:8px; display:block; color:#999;"
-                       data-bg="Какво да показва" data-en="What to show"></label>
-                <div class="check-group" id="debridModeGroup" data-mode="radio">
-                    <div class="chip on" data-value="guaranteed">
-                        <span data-bg="Само гарантирани" data-en="Guaranteed only"></span>
-                    </div>
-                    <div class="chip" data-value="all">
-                        <span data-bg="Гарантирани + останали" data-en="Guaranteed + others"></span>
-                    </div>
-                </div>
-                <div class="hint" data-bg="'Гарантирани' са кеширани — пускат моментално. 'Останали' се показват отдолу като P2P backup."
-                     data-en="'Guaranteed' are cached — instant playback. 'Others' appear below as P2P backup."></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- CONTENT -->
-    <div class="section">
-        <div class="section-title">
-            <span class="icon">${icons.film}</span>
-            <span data-bg="Съдържание" data-en="Content"></span>
-        </div>
-        <div class="check-group" id="contentGroup" data-mode="radio">
-            <div class="chip" data-value="bgaudio"><span data-bg="Само БГ аудио" data-en="BG Audio only"></span></div>
-            <div class="chip on" data-value="all"><span data-bg="Всички" data-en="All content"></span></div>
-        </div>
-    </div>
-
-    <!-- QUALITY -->
-    <div class="section">
-        <div class="section-title">
-            <span class="icon">${icons.monitor}</span>
-            <span data-bg="Качество" data-en="Quality"></span>
-        </div>
-        <div class="check-group" id="qualityGroup" data-mode="multi">
-            <div class="chip on" data-value="4k">4K</div>
-            <div class="chip on" data-value="1080p">1080p</div>
-            <div class="chip on" data-value="720p">720p</div>
-            <div class="chip on" data-value="sd">SD</div>
-        </div>
-    </div>
-
-    <!-- Sources always included — shown in stream info only -->
-
-    <!-- SORTING -->
-    <div class="section">
-        <div class="section-title">
-            <span class="icon">${icons.shuffle}</span>
-            <span data-bg="Сортиране" data-en="Sorting"></span>
-        </div>
-        <select id="sortSelect">
-            <option value="quality" data-bg="По качество (най-добро първо)" data-en="By quality (best first)">По качество (най-добро първо)</option>
-            <option value="size" data-bg="По размер (най-голям първо)" data-en="By size (largest first)">По размер (най-голям първо)</option>
-        </select>
-    </div>
-
-    <!-- SIZE LIMIT -->
-    <div class="section">
-        <div class="section-title">
-            <span class="icon">${icons.box}</span>
-            <span data-bg="Лимит на размер" data-en="Size limit"></span>
-        </div>
-        <input type="text" class="size-input" id="sizeLimit" style="width:100%"
-               data-bg-placeholder="Без лимит" data-en-placeholder="No limit" placeholder="Без лимит">
-        <div class="hint" data-bg="Максимален размер на файл. Примери: 5GB, 10GB. За различен лимит за филми и сериали: 10GB,2GB"
-             data-en="Maximum file size. Examples: 5GB, 10GB. Different limit for movies and series: 10GB,2GB"></div>
-    </div>
-
-    <!-- INSTALL -->
-    <div class="install-section">
-        <div class="btn-row">
-            <button class="btn btn-primary" onclick="install()">
-                <span data-bg="📥 Инсталирай в Stremio" data-en="📥 Install in Stremio"></span>
-            </button>
-            <button class="btn btn-secondary" onclick="copyUrl()">
-                <span data-bg="📋 Копирай URL" data-en="📋 Copy URL"></span>
-            </button>
-        </div>
-        <div id="manifestUrl"></div>
-        <div style="margin-top:16px; padding:12px 16px; background:rgba(245,208,32,0.06); border:1px solid rgba(245,208,32,0.15); border-radius:8px; font-size:12px; line-height:1.6; color:#999;">
-            <span data-bg="⏱ Addon-ът е на безплатен сървър, който заспива след 15 мин. неактивност. Първото търсене след пауза отнема ~30 сек. за събуждане, след което работи нормално."
-                  data-en="⏱ This addon runs on a free server that sleeps after 15 min. of inactivity. The first search after a pause takes ~30 sec. to wake up, then works normally."></span>
-        </div>
-    </div>
-
-    <div class="footer">
-        <span data-bg="Данни от" data-en="Data from"></span>
-        <a href="https://zamunda.rip" target="_blank">zamunda.rip</a>
-        · Zamunda + ArenaBG + Zelka · 450K+ torrents
-    </div>
-</div>
-
-<script>
-let currentLang = 'bg';
-
-function setLang(lang) {
-    currentLang = lang;
-    document.getElementById('langBG').classList.toggle('active', lang === 'bg');
-    document.getElementById('langEN').classList.toggle('active', lang === 'en');
-    document.querySelectorAll('[data-bg]').forEach(el => {
-        const val = el.getAttribute('data-' + lang);
-        if (val) el.textContent = val;
-    });
-    document.querySelectorAll('select option').forEach(opt => {
-        const val = opt.getAttribute('data-' + lang);
-        if (val) opt.textContent = val;
-    });
-    document.querySelectorAll('[data-bg-placeholder]').forEach(el => {
-        el.placeholder = el.getAttribute('data-' + lang + '-placeholder');
-    });
-}
-
-function selectDebrid(value) {
-    document.querySelectorAll('.radio-card').forEach(c => c.classList.remove('selected'));
-    const cardId = value === 'realdebrid' ? 'card-rd' : value === 'torbox' ? 'card-tb' : 'card-p2p';
-    document.getElementById(cardId).classList.add('selected');
-    document.querySelector('input[name="debrid"][value="' + value + '"]').checked = true;
-    document.getElementById('rdTokenRow').classList.toggle('visible', value === 'realdebrid');
-    document.getElementById('tbTokenRow').classList.toggle('visible', value === 'torbox');
-    document.getElementById('debridModeRow').classList.toggle('visible', value === 'realdebrid' || value === 'torbox');
-}
-
-// Chip toggle logic
-document.querySelectorAll('.check-group').forEach(group => {
-    const mode = group.dataset.mode; // 'radio' or 'multi'
-    group.querySelectorAll('.chip').forEach(chip => {
-        chip.addEventListener('click', (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            if (mode === 'radio') {
-                group.querySelectorAll('.chip').forEach(c => c.classList.remove('on'));
-                chip.classList.add('on');
-            } else {
-                chip.classList.toggle('on');
-                // Prevent deselecting all
-                if (!group.querySelector('.chip.on')) chip.classList.add('on');
-            }
-        });
-    });
-});
-
-function getSelected(groupId) {
-    const chips = document.querySelectorAll('#' + groupId + ' .chip.on');
-    return Array.from(chips).map(c => c.dataset.value);
-}
-
-function buildConfigString() {
-    const parts = [];
-    const debrid = document.querySelector('input[name="debrid"]:checked').value;
-    parts.push('debrid=' + debrid);
-    if (debrid === 'realdebrid') {
-        const token = document.getElementById('rdToken').value.trim();
-        if (token) parts.push('rdtoken=' + token);
-    }
-    if (debrid === 'torbox') {
-        const token = document.getElementById('tbToken').value.trim();
-        if (token) parts.push('tbtoken=' + token);
-    }
-    if (debrid === 'realdebrid' || debrid === 'torbox') {
-        const mode = getSelected('debridModeGroup');
-        if (mode[0] && mode[0] !== 'guaranteed') parts.push('debridmode=' + mode[0]);
-    }
-
-    const content = getSelected('contentGroup');
-    parts.push('content=' + content[0]);
-
-    const qualities = getSelected('qualityGroup');
-    if (qualities.length > 0 && qualities.length < 4) parts.push('quality=' + qualities.join(','));
-
-    const sort = document.getElementById('sortSelect').value;
-    if (sort !== 'quality') parts.push('sort=' + sort);
-
-    const sizeLimit = document.getElementById('sizeLimit').value.trim();
-    if (sizeLimit) parts.push('sizelimit=' + sizeLimit);
-
-    parts.push('lang=' + currentLang);
-    return parts.join('|');
-}
-
-function getManifestUrl() {
-    const debrid = document.querySelector('input[name="debrid"]:checked').value;
-    if (debrid === 'realdebrid') {
-        const token = document.getElementById('rdToken').value.trim();
-        if (!token) { alert(currentLang === 'bg' ? 'Въведи Real-Debrid token' : 'Enter Real-Debrid token'); return null; }
-        if (token.length < 20) { alert(currentLang === 'bg' ? 'Token-ът изглежда невалиден' : 'Token looks invalid'); return null; }
-    }
-    if (debrid === 'torbox') {
-        const token = document.getElementById('tbToken').value.trim();
-        if (!token) { alert(currentLang === 'bg' ? 'Въведи TorBox token' : 'Enter TorBox token'); return null; }
-        if (token.length < 10) { alert(currentLang === 'bg' ? 'Token-ът изглежда невалиден' : 'Token looks invalid'); return null; }
-    }
-    return window.location.origin + '/' + encodeURIComponent(buildConfigString()) + '/manifest.json';
-}
-
-function install() {
-    const url = getManifestUrl();
-    if (!url) return;
-    window.location.href = url.replace(/^https?:/, 'stremio:');
-}
-
-function copyUrl() {
-    const url = getManifestUrl();
-    if (!url) return;
-    navigator.clipboard.writeText(url).then(() => {
-        const div = document.getElementById('manifestUrl');
-        div.textContent = url;
-        div.style.display = 'block';
-    });
-}
-
-setLang('bg');
-</script>
-</body>
-</html>`;
-}
-
+// DEAD CODE REMOVED: configPageHTML() was ~400 lines of inline HTML
+// Config page is now served from config.html file
+// =====================================================
 // =====================================================
 // EXPRESS ROUTES
 // =====================================================
@@ -1121,14 +891,20 @@ function trackUser(req, config) {
     const id = getUserId(req, config);
     sadd('users', id);
 }
-function trackMigration(req, config) {
+async function trackMigration(req, config) {
     const id = getUserId(req, config);
-    sadd('migratedUsers', id);
+    // Check if this user existed before the migration
+    const wasPre = await redisCmd('SISMEMBER', 'zamunda:preMigrationUsers', id);
+    if (wasPre) {
+        sadd('migratedUsers', id);
+    } else {
+        sadd('newUsers', id);
+    }
 }
 
 // Config page
 const configHTML = fs.readFileSync(path.join(__dirname, 'config.html'), 'utf8');
-app.get('/', (req, res) => { incr('configPage'); res.type('html').send(configHTML); });
+app.get('/', (req, res) => { incr('configPage'); incrDaily('pageViews'); res.type('html').send(configHTML); });
 app.get('/configure', (req, res) => res.redirect('/'));
 app.get('/:config/configure', (req, res) => res.redirect('/'));
 
@@ -1144,7 +920,7 @@ app.get('/:config/manifest.json', (req, res) => {
 
 // Streams
 app.get('/:config/stream/:type/:id.json', async (req, res) => {
-    incr('streams');
+    incr('streams'); incrDaily('streams');
     try {
         const config = parseConfig(decodeURIComponent(req.params.config));
         trackUser(req, config);
@@ -1168,14 +944,22 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
     }
 });
 
-// Stats — JSON API
+// Auth middleware for admin endpoints
+function adminAuth(req, res, next) {
+    const key = req.query.key || req.headers['x-dashboard-key'];
+    if (key === DASHBOARD_KEY) return next();
+    res.status(403).json({ error: 'Unauthorized. Add ?key=YOUR_KEY' });
+}
+
+// Stats — JSON API (public, used by config page)
 app.get('/stats', async (req, res) => {
-    const [configPage, installs, streams, users, migrated] = await Promise.all([
+    const [configPage, installs, streams, users, migrated, newU] = await Promise.all([
         getCount('configPage'),
         getCount('installs'),
         getCount('streams'),
         scard('users'),
         scard('migratedUsers'),
+        scard('newUsers'),
     ]);
     res.json({
         configPageViews: Number(configPage),
@@ -1183,19 +967,53 @@ app.get('/stats', async (req, res) => {
         streamRequests: Number(streams),
         uniqueUsers: Number(users || 0),
         migratedUsers: Number(migrated || 0),
+        newUsers: Number(newU || 0),
         persistent: !!UPSTASH_URL,
     });
 });
 
-// Stats — Visual dashboard
-app.get('/dashboard', async (req, res) => {
-    const [configPage, installs, streams, users, migrated] = await Promise.all([
+// Stats history (auth required)
+app.get('/stats/history', adminAuth, async (req, res) => {
+    const raw = await hgetall('dailyStats');
+    if (!raw || raw.length === 0) return res.json([]);
+    // hgetall returns [field, value, field, value, ...]
+    const history = [];
+    for (let i = 0; i < raw.length; i += 2) {
+        try { history.push(JSON.parse(raw[i + 1])); } catch (e) {}
+    }
+    history.sort((a, b) => a.date.localeCompare(b.date));
+    res.json(history);
+});
+
+// Stats — Visual dashboard (auth required)
+app.get('/dashboard', adminAuth, async (req, res) => {
+    const [configPage, installs, streams, users, migrated, newU, historyRaw] = await Promise.all([
         getCount('configPage'),
         getCount('installs'),
         getCount('streams'),
         scard('users'),
         scard('migratedUsers'),
+        scard('newUsers'),
+        hgetall('dailyStats'),
     ]);
+    // Build history from snapshots + daily counters
+    const history = [];
+    if (historyRaw && historyRaw.length > 0) {
+        const dates = [];
+        for (let i = 0; i < historyRaw.length; i += 2) {
+            try { const s = JSON.parse(historyRaw[i + 1]); dates.push(s); } catch (e) {}
+        }
+        // Fetch daily counters for each date
+        const dailyCounts = await Promise.all(dates.map(async (s) => {
+            const [dayStreams, dayViews] = await Promise.all([
+                getDailyCount(s.date, 'streams'),
+                getDailyCount(s.date, 'pageViews'),
+            ]);
+            return { ...s, dayStreams, dayViews };
+        }));
+        dailyCounts.sort((a, b) => b.date.localeCompare(a.date));
+        history.push(...dailyCounts);
+    }
     const count = Math.min(parseInt(req.query.n) || 50, 500);
     const logs = await getLogs(count);
     const errors = logs.filter(l => l.includes('[ERROR]'));
@@ -1247,9 +1065,10 @@ h1{font-family:'Chakra Petch',sans-serif;font-size:24px;color:var(--gold);text-a
 <p class="sub">Live Dashboard — ${new Date().toISOString().substring(0,16).replace('T',' ')}</p>
 
 <div class="grid">
-<div class="card"><div class="card-value">${Number(users||0)}</div><div class="card-label">Unique Users</div></div>
-<div class="card"><div class="card-value green">${Number(migrated||0)}</div><div class="card-label">Migrated Users</div></div>
-<div class="card"><div class="card-value blue">${Number(configPage)}</div><div class="card-label">Page Views</div></div>
+<div class="card"><div class="card-value">${Number(users||0)}</div><div class="card-label">Total Users</div></div>
+<div class="card"><div class="card-value green">${Number(migrated||0)}</div><div class="card-label">Migrated</div></div>
+<div class="card"><div class="card-value blue">${Number(newU||0)}</div><div class="card-label">New Users</div></div>
+<div class="card"><div class="card-value">${Number(configPage)}</div><div class="card-label">Page Views</div></div>
 <div class="card"><div class="card-value">${(Number(streams)/1000).toFixed(1)}K</div><div class="card-label">Stream Requests</div></div>
 <div class="card"><div class="card-value orange">${searches.length}</div><div class="card-label">Searches (last ${logs.length})</div></div>
 <div class="card"><div class="card-value ${misses.length > 0 ? 'orange' : 'green'}">${(misses.length/Math.max(searches.length,1)*100).toFixed(0)}%</div><div class="card-label">Miss Rate</div></div>
@@ -1277,14 +1096,41 @@ ${logs.map(l => {
 }).join('')}
 </div>
 
+${history.length > 0 ? `
+<div class="section-title">Daily Stats</div>
+<div class="log-box" style="max-height:30vh">
+<table style="width:100%;border-collapse:collapse;font-size:12px">
+<tr style="color:var(--gold);text-align:left;border-bottom:1px solid var(--border)">
+<th style="padding:6px 4px">Date</th><th>Users</th><th>Migrated</th><th>New</th><th>Streams</th><th>Page Views</th></tr>
+${history.map((h) => {
+    return '<tr style="border-bottom:1px solid rgba(255,255,255,0.03)"><td style="padding:4px;color:var(--dim)">' + h.date.substring(5) + '</td>'
+    + '<td>' + h.totalUsers + '</td>'
+    + '<td style="color:var(--green)">' + h.migrated + '</td>'
+    + '<td style="color:var(--blue)">' + h.newUsers + '</td>'
+    + '<td style="color:var(--gold)">' + (h.dayStreams || 0) + '</td>'
+    + '<td style="color:var(--gold)">' + (h.dayViews || 0) + '</td></tr>';
+}).join('')}
+</table>
+</div>` : ''}
+
+<div class="section-title">Server Status</div>
+<div class="card" style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px">
+<div style="display:flex;align-items:center;gap:10px">
+<div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
+<span style="font-size:14px;font-weight:600">Online</span>
+<span style="font-size:12px;color:var(--dim)">v2.1.0</span>
+</div>
+<a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
+</div>
+
 <button class="refresh" onclick="location.reload()">Refresh</button>
 </div>
 </body>
 </html>`);
 });
 
-// Logs — last 50 events (searches, results, errors)
-app.get('/logs', async (req, res) => {
+// Logs — last 50 events (auth required)
+app.get('/logs', adminAuth, async (req, res) => {
     const count = Math.min(parseInt(req.query.n) || 50, 500);
     const logs = await getLogs(count);
     const errors = logs.filter(l => l.includes('[ERROR]'));
@@ -1301,9 +1147,19 @@ app.get('/logs', async (req, res) => {
 });
 
 // Health
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.0.0' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.0' }));
+
+// Catch unhandled errors — log and keep running
+process.on('unhandledRejection', (err) => {
+    console.error('⚠️ Unhandled rejection:', err?.message || err);
+    logEvent('ERROR', `Unhandled rejection: ${err?.message || 'unknown'}`);
+});
+process.on('uncaughtException', (err) => {
+    console.error('💀 Uncaught exception:', err?.message || err);
+    logEvent('ERROR', `Uncaught exception: ${err?.message || 'unknown'}`);
+});
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.0.0 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.1.0 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
