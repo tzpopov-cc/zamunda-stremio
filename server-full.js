@@ -1124,11 +1124,14 @@ ${history.length > 0 ? `
 <table style="width:100%;border-collapse:collapse;font-size:12px">
 <tr style="color:var(--gold);text-align:left;border-bottom:1px solid var(--border)">
 <th style="padding:6px 4px">Date</th><th>Users</th><th>Migrated</th><th>New</th><th>Streams</th><th>Page Views</th></tr>
-${history.map((h) => {
+${history.map((h, i) => {
+    const prev = history[i + 1]; // sorted desc, so i+1 is previous day
+    const dMigrated = prev ? h.migrated - prev.migrated : h.migrated;
+    const dNew = prev ? h.newUsers - prev.newUsers : h.newUsers;
     return '<tr style="border-bottom:1px solid rgba(255,255,255,0.03)"><td style="padding:4px;color:var(--dim)">' + h.date.substring(5) + '</td>'
     + '<td>' + h.totalUsers + '</td>'
-    + '<td style="color:var(--green)">' + h.migrated + '</td>'
-    + '<td style="color:var(--blue)">' + h.newUsers + '</td>'
+    + '<td style="color:var(--green)">' + (dMigrated > 0 ? '+' + dMigrated : dMigrated) + '</td>'
+    + '<td style="color:var(--blue)">' + (dNew > 0 ? '+' + dNew : dNew) + '</td>'
     + '<td style="color:var(--gold)">' + (h.dayStreams || 0) + '</td>'
     + '<td style="color:var(--gold)">' + (h.dayViews || 0) + '</td></tr>';
 }).join('')}
@@ -1140,7 +1143,7 @@ ${history.map((h) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.1.0</span>
+<span style="font-size:12px;color:var(--dim)">v2.1.1</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
