@@ -482,9 +482,13 @@ async function tbCheckCached(infohashes, tbToken) {
         }
         return new Map();
     } catch (e) {
-        console.error('TorBox cache check error:', e.response?.data?.detail || e.message);
-        logEvent('ERROR', `TB cache check: ${e.response?.data?.detail || e.message}`);
-        return new Map();
+        const detail = e.response?.data?.detail || e.message;
+        const isAuthError = e.response?.status === 401 || e.response?.status === 403 || /token.*invalid|token.*expired|log in again/i.test(detail);
+        console.error('TorBox cache check error:', detail);
+        logEvent('ERROR', `TB cache check: ${detail}`);
+        const result = new Map();
+        if (isAuthError) result._authError = true;
+        return result;
     }
 }
 
@@ -770,6 +774,24 @@ async function resolveStreams(type, fullId, config) {
         const startTime = Date.now();
         const infohashes = filtered.map(t => t._infohash);
         const cached = await tbCheckCached(infohashes, config.tbtoken);
+
+        // If TB token is expired/invalid, show warning + fall back to P2P
+        if (cached._authError) {
+            const tbAuthHint = [{
+                name: `⚠️ TorBox грешка\nZamunda BG`,
+                title: config.lang === 'bg'
+                    ? `TorBox токенът е изтекъл или невалиден.\nПреконфигурирай добавката с нов токен.`
+                    : `TorBox token expired or invalid.\nReconfigure the addon with a new token.`,
+                externalUrl: 'https://zamunda-stremio.tzkppv.com',
+                behaviorHints: { notWebReady: true }
+            }];
+            const p2pStreams = filtered.map(t => buildStream(t, null, 'p2p'));
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+            console.log(`  → TB auth error, ${p2pStreams.length} P2P fallback in ${elapsed}s`);
+            logEvent('TB', `0 TB (auth error) + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
+            return [...hints, ...tbAuthHint, ...p2pStreams];
+        }
+
         const cachedTorrents = filtered.filter(t => cached.has(t._infohash));
         console.log(`  ${cachedTorrents.length} cached on TorBox`);
 
