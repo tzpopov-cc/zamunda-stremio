@@ -31,35 +31,128 @@ function getCached(key) {
 function setCached(key, data) {
     cache.set(key, { data, time: Date.now() });
 }
-// Daily stats — per-day counters using Redis INCR
-function todayKey() { return new Date().toISOString().substring(0, 10); }
-function incrDaily(metric) { return redisCmd('INCR', `zamunda:daily:${todayKey()}:${metric}`); }
-async function getDailyCount(date, metric) { return Number(await redisCmd('GET', `zamunda:daily:${date}:${metric}`)) || 0; }
+// =====================================================
+// STATS — local JSON store (moved off Upstash Redis after the free 500K-command
+// quota was exhausted). Persisted to a bind-mounted file so counters/users/logs
+// survive container restarts and redeploys. Tiny dataset, single instance.
+// =====================================================
+const DATA_DIR = process.env.DATA_DIR || '/app/data';
+const STATS_FILE = path.join(DATA_DIR, 'stats.json');
 
-// Snapshot totals daily (for users/migrated/new which are sets, not counters)
+const store = {
+    counters: { configPage: 0, installs: 0, streams: 0 },
+    daily: {},                  // { 'YYYY-MM-DD': { streams, pageViews } }
+    users: new Set(),
+    migratedUsers: new Set(),
+    newUsers: new Set(),
+    preMigrationUsers: new Set(),
+    dailyStats: {},             // { 'YYYY-MM-DD': '<json snapshot string>' }
+    logs: [],                   // newest-first, capped at 500
+};
+
+function loadStore() {
+    try {
+        const d = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8'));
+        Object.assign(store.counters, d.counters || {});
+        store.daily = d.daily || {};
+        store.users = new Set(d.users || []);
+        store.migratedUsers = new Set(d.migratedUsers || []);
+        store.newUsers = new Set(d.newUsers || []);
+        store.preMigrationUsers = new Set(d.preMigrationUsers || []);
+        store.dailyStats = d.dailyStats || {};
+        store.logs = Array.isArray(d.logs) ? d.logs : [];
+        console.log(`💾 Stats loaded: ${store.users.size} users, ${store.counters.streams} streams, ${store.logs.length} logs`);
+    } catch (e) {
+        console.log(`💾 No stats file at ${STATS_FILE} (${e.code || e.message}) — starting fresh`);
+    }
+}
+
+let dirty = false;
+function markDirty() { dirty = true; }
+function persist() {
+    if (!dirty) return;
+    dirty = false;
+    const data = JSON.stringify({
+        counters: store.counters,
+        daily: store.daily,
+        users: [...store.users],
+        migratedUsers: [...store.migratedUsers],
+        newUsers: [...store.newUsers],
+        preMigrationUsers: [...store.preMigrationUsers],
+        dailyStats: store.dailyStats,
+        logs: store.logs,
+    });
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.writeFileSync(`${STATS_FILE}.tmp`, data);
+        fs.renameSync(`${STATS_FILE}.tmp`, STATS_FILE);   // atomic replace
+    } catch (e) {
+        console.error('⚠️ Stats persist failed:', e.message);
+        dirty = true;   // retry on next tick
+    }
+}
+
+loadStore();
+setInterval(persist, 5000);                                    // debounced flush to disk
+['SIGTERM', 'SIGINT'].forEach(sig => process.on(sig, () => { persist(); process.exit(0); }));
+
+function todayKey() { return new Date().toISOString().substring(0, 10); }
+
+// Counters
+function incr(key) { store.counters[key] = (store.counters[key] || 0) + 1; markDirty(); }
+function getCount(key) { return store.counters[key] || 0; }
+function incrDaily(metric) {
+    const d = (store.daily[todayKey()] = store.daily[todayKey()] || { streams: 0, pageViews: 0 });
+    d[metric] = (d[metric] || 0) + 1; markDirty();
+}
+function getDailyCount(date, metric) { return (store.daily[date] && store.daily[date][metric]) || 0; }
+
+// User sets
+function sadd(key, val) { const s = store[key]; if (s && !s.has(val)) { s.add(val); markDirty(); } }
+function scard(key) { return store[key] ? store[key].size : 0; }
+function isPreMigration(id) { return store.preMigrationUsers.has(id); }
+
+// Daily snapshot "hash" (returned in the [field, value, ...] shape the dashboard expects)
+function setDailySnap(date, json) { store.dailyStats[date] = json; markDirty(); }
+function hgetall(key) {
+    if (key !== 'dailyStats') return [];
+    const out = [];
+    for (const [d, v] of Object.entries(store.dailyStats)) out.push(d, v);
+    return out;
+}
+
+// Logs (newest-first, last 500)
+function logEvent(type, msg) {
+    store.logs.unshift(`${new Date().toISOString().substring(0, 19)} [${type}] ${msg}`);
+    if (store.logs.length > 500) store.logs.length = 500;
+    markDirty();
+}
+function getLogs(count = 50) { return store.logs.slice(0, count); }
+
+// Stats summary — trivial in-memory read (no cache / quota / fallback needed anymore)
+function getStats() {
+    return {
+        configPageViews: store.counters.configPage || 0,
+        installs: store.counters.installs || 0,
+        streamRequests: store.counters.streams || 0,
+        uniqueUsers: store.users.size,
+        migratedUsers: store.migratedUsers.size,
+        newUsers: store.newUsers.size,
+    };
+}
+
+// Snapshot user totals once per day (for the growth-delta table)
 let lastSnapshotDate = '';
-async function dailySnapshot() {
+function dailySnapshot() {
     const today = todayKey();
     if (today === lastSnapshotDate) return;
-    const r = await redisPipeline([
-        ['SCARD', 'zamunda:users'],
-        ['SCARD', 'zamunda:migratedUsers'],
-        ['SCARD', 'zamunda:newUsers'],
-    ]);
-    // Never persist a snapshot built from a failed read — it would write 0 and poison the
-    // daily-delta history forever. Bail and let the next hourly tick retry.
-    if (r.some(v => v === null || v === undefined)) {
-        console.log('⚠️ Daily snapshot skipped (Redis read failed) — will retry next tick');
-        return;
-    }
     lastSnapshotDate = today;
-    const snap = JSON.stringify({
+    setDailySnap(today, JSON.stringify({
         date: today,
-        totalUsers: Number(r[0]) || 0,
-        migrated: Number(r[1]) || 0,
-        newUsers: Number(r[2]) || 0,
-    });
-    await hset('dailyStats', today, snap);
+        totalUsers: store.users.size,
+        migrated: store.migratedUsers.size,
+        newUsers: store.newUsers.size,
+    }));
     console.log(`📊 Daily snapshot saved: ${today}`);
 }
 setInterval(dailySnapshot, 60 * 60 * 1000);
@@ -75,87 +168,7 @@ setInterval(() => {
     if (evicted > 0) console.log(`🧹 Cache eviction: ${evicted} stale entries removed, ${cache.size} remaining`);
 }, 10 * 60 * 1000);
 
-// =====================================================
-// STATS — persisted in Upstash Redis
-// =====================================================
-const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL || '';
-const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || '';
-
-async function redisCmd(...args) {
-    if (!UPSTASH_URL) return null;
-    try {
-        const res = await axios.post(`${UPSTASH_URL}`, args, {
-            headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
-            timeout: 3000
-        });
-        return res.data?.result;
-    } catch (e) { return null; }
-}
-
-async function incr(key) { return redisCmd('INCR', `zamunda:${key}`); }
-async function sadd(key, val) { return redisCmd('SADD', `zamunda:${key}`, val); }
-async function hset(key, field, val) { return redisCmd('HSET', `zamunda:${key}`, field, String(val)); }
-async function hgetall(key) { return redisCmd('HGETALL', `zamunda:${key}`); }
-async function scard(key) { return redisCmd('SCARD', `zamunda:${key}`); }
-async function getCount(key) { return (await redisCmd('GET', `zamunda:${key}`)) || 0; }
-
-// Pipeline — run many commands in ONE Upstash REST request. Far fewer round-trips than
-// firing N concurrent redisCmd() calls, which is what made /stats + /dashboard flap to 0.
-async function redisPipeline(commands) {
-    if (!UPSTASH_URL) return commands.map(() => null);
-    let out;
-    try {
-        const res = await axios.post(`${UPSTASH_URL}/pipeline`, commands, {
-            headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
-            timeout: 5000,
-        });
-        const arr = Array.isArray(res.data) ? res.data : [];
-        out = commands.map((_, i) => { const r = arr[i]; return (r && !r.error && r.result !== undefined) ? r.result : null; });
-    } catch (e) { out = commands.map(() => null); }
-    // If the whole pipeline was rejected (Upstash returns per-item errors on quota exhaustion),
-    // fall back to individual commands — singles often still get through when a pipeline won't.
-    if (out.every(v => v === null)) out = await Promise.all(commands.map(c => redisCmd(...c)));
-    return out;
-}
-
-// Cached, fault-tolerant stats read. One pipeline call, 30s cache, and a last-good
-// fallback so a transient Redis failure can never blank a field to 0 on the dashboard.
-let statsCache = { data: null, time: 0 };
-let lastGoodStats = {};
-const STATS_TTL = 30 * 1000;
-async function getStats() {
-    if (statsCache.data && Date.now() - statsCache.time < STATS_TTL) return statsCache.data;
-    const r = await redisPipeline([
-        ['GET', 'zamunda:configPage'],
-        ['GET', 'zamunda:installs'],
-        ['GET', 'zamunda:streams'],
-        ['SCARD', 'zamunda:users'],
-        ['SCARD', 'zamunda:migratedUsers'],
-        ['SCARD', 'zamunda:newUsers'],
-    ]);
-    const fields = ['configPageViews', 'installs', 'streamRequests', 'uniqueUsers', 'migratedUsers', 'newUsers'];
-    const stats = {};
-    let gotAny = false;
-    fields.forEach((f, i) => {
-        const n = Number(r[i]);
-        if (r[i] !== null && r[i] !== undefined && Number.isFinite(n)) { stats[f] = n; lastGoodStats[f] = n; gotAny = true; }
-        else { stats[f] = lastGoodStats[f] || 0; }
-    });
-    // Only cache a read that actually returned data, so a total backend failure (e.g. quota)
-    // can't lock in zeros for the whole TTL on a cold start — next call retries immediately.
-    if (gotAny) statsCache = { data: stats, time: Date.now() };
-    return stats;
-}
-
-// Recent logs — store last 100 events in a Redis list
-async function logEvent(type, msg) {
-    const entry = `${new Date().toISOString().substring(0,19)} [${type}] ${msg}`;
-    await redisCmd('LPUSH', 'zamunda:logs', entry);
-    await redisCmd('LTRIM', 'zamunda:logs', '0', '499'); // keep last 500
-}
-async function getLogs(count = 50) {
-    return (await redisCmd('LRANGE', 'zamunda:logs', '0', String(count - 1))) || [];
-}
+// (stats now live in the local JSON store defined above — Upstash Redis removed)
 
 // =====================================================
 // CONFIG PARSING — config lives in URL path
@@ -969,15 +982,11 @@ function trackUser(req, config) {
     const id = getUserId(req, config);
     sadd('users', id);
 }
-async function trackMigration(req, config) {
+function trackMigration(req, config) {
     const id = getUserId(req, config);
-    // Check if this user existed before the migration
-    const wasPre = await redisCmd('SISMEMBER', 'zamunda:preMigrationUsers', id);
-    if (wasPre) {
-        sadd('migratedUsers', id);
-    } else {
-        sadd('newUsers', id);
-    }
+    // Was this user seen before the migration?
+    if (isPreMigration(id)) sadd('migratedUsers', id);
+    else sadd('newUsers', id);
 }
 
 // Config page
@@ -1033,7 +1042,7 @@ function adminAuth(req, res, next) {
 // Stats — JSON API (public, used by config page)
 app.get('/stats', async (req, res) => {
     const s = await getStats();
-    res.json({ ...s, persistent: !!UPSTASH_URL });
+    res.json({ ...s, persistent: true });
 });
 
 // Stats history (auth required)
@@ -1061,14 +1070,10 @@ app.get('/dashboard', adminAuth, async (req, res) => {
         for (let i = 0; i < historyRaw.length; i += 2) {
             try { const s = JSON.parse(historyRaw[i + 1]); dates.push(s); } catch (e) {}
         }
-        // Fetch all daily counters in ONE pipeline request (was 2×N concurrent GETs → flapped)
-        const cmds = [];
-        dates.forEach(d => { cmds.push(['GET', `zamunda:daily:${d.date}:streams`], ['GET', `zamunda:daily:${d.date}:pageViews`]); });
-        const dc = await redisPipeline(cmds);
-        const dailyCounts = dates.map((d, i) => ({
+        const dailyCounts = dates.map(d => ({
             ...d,
-            dayStreams: Number(dc[i * 2]) || 0,
-            dayViews: Number(dc[i * 2 + 1]) || 0,
+            dayStreams: getDailyCount(d.date, 'streams'),
+            dayViews: getDailyCount(d.date, 'pageViews'),
         }));
         dailyCounts.sort((a, b) => b.date.localeCompare(a.date));
         history.push(...dailyCounts);
