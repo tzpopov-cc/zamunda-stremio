@@ -210,7 +210,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.1.1',
+        version: '2.1.2',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda.RIP архива (${mode} режим)`
@@ -1257,7 +1257,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.1.1</span>
+<span style="font-size:12px;color:var(--dim)">v2.1.2</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1286,7 +1286,7 @@ app.get('/logs', adminAuth, async (req, res) => {
 });
 
 // Health
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.1' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.2' }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1302,6 +1302,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.1.1 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.1.2 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
