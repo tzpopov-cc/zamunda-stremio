@@ -662,6 +662,63 @@ function sortTorrents(torrents, config) {
 }
 
 // =====================================================
+// MOVIE MATCHING — keep the film the user actually picked, not sequels/remakes
+// that merely share the name (e.g. "Toy Story" vs "Toy Story 2/3/4").
+// =====================================================
+function normalizeTitle(s) {
+    return (s || '')
+        .toLowerCase()
+        .replace(/[._]+/g, ' ')               // dots/underscores → spaces
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')    // strip punctuation (keep Cyrillic via \p{L})
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function parseYear(v) {
+    const m = v && String(v).match(/(19|20)\d{2}/);
+    return m ? parseInt(m[0]) : null;
+}
+
+// All plausible release years mentioned in a torrent name (≤ next year, so "2049"
+// in "Blade Runner 2049" is not mistaken for a release year).
+function torrentYears(title) {
+    const nextYear = new Date().getFullYear() + 1;
+    return (normalizeTitle(title).match(/\b(?:19|20)\d{2}\b/g) || [])
+        .map(Number).filter(y => y >= 1900 && y <= nextYear);
+}
+
+// The title portion of a torrent name: tokens before the first release year or quality tag.
+const QUALITY_TOKEN = /^(2160p|1080p|720p|480p|4k|uhd|bluray|bdrip|brrip|webrip|webdl|web|hdrip|dvdrip|dvdscr|x264|x265|h264|h265|hevc|xvid|avc|remux|hdtv|hdcam|cam|ts|telesync)$/;
+function torrentTitlePrefix(title) {
+    const nextYear = new Date().getFullYear() + 1;
+    const out = [];
+    for (const tok of normalizeTitle(title).split(' ')) {
+        if (/^(19|20)\d{2}$/.test(tok) && parseInt(tok) <= nextYear) break;
+        if (QUALITY_TOKEN.test(tok)) break;
+        out.push(tok);
+    }
+    return out.join(' ').trim();
+}
+
+function matchesMovie(title, name, year, bgName) {
+    const prefix = torrentTitlePrefix(title);
+    const n = normalizeTitle(name);
+    const bn = bgName ? normalizeTitle(bgName) : null;
+    if (!prefix || !n) return false;
+    const exact = prefix === n || (!!bn && prefix === bn);
+    const nameIsPrefix = prefix.startsWith(n + ' ') || (!!bn && prefix.startsWith(bn + ' '));
+    const years = torrentYears(title);
+    if (year && years.length) {
+        // Torrent states a year: it must be the right one (±1 for prod/release drift).
+        // This rejects both sequels (different year) and same-name remakes.
+        if (!years.some(y => Math.abs(y - year) <= 1)) return false;
+        return exact || nameIsPrefix;
+    }
+    // No year on the torrent (or unknown target year) → require an exact title match.
+    return exact;
+}
+
+// =====================================================
 // MAIN RESOLVER
 // =====================================================
 async function resolveStreams(type, fullId, config) {
@@ -683,6 +740,8 @@ async function resolveStreams(type, fullId, config) {
     // because zamunda API returns max 20 results per query
     const queries = [meta.name];
     if (meta.bulgarian_name) queries.push(meta.bulgarian_name);
+    const movieYear = type === 'movie' ? parseYear(meta.year || meta.releaseInfo) : null;
+    if (movieYear) queries.push(`${meta.name} ${movieYear}`);   // surface the right-year release even if it ranks low
     if (type === 'series' && season) {
         const s = String(season).padStart(2, '0');
         const e = episode ? String(episode).padStart(2, '0') : null;
@@ -758,6 +817,19 @@ async function resolveStreams(type, fullId, config) {
                 logEvent('MISS', `${label} — ${beforeCount} torrents but 0 episode matches${detail} [${titles.join(' | ')}]`);
                 return [];
             }
+        }
+    }
+
+    // Movie matching — drop torrents that aren't THIS film (sequels, remakes, name-substring hits)
+    if (type === 'movie') {
+        const matched = allTorrents.filter(t => matchesMovie(t.title, meta.name, movieYear, meta.bulgarian_name));
+        if (matched.length > 0) {
+            if (matched.length < allTorrents.length) {
+                console.log(`  ${matched.length}/${allTorrents.length} match movie "${meta.name}"${movieYear ? ` (${movieYear})` : ''}`);
+            }
+            allTorrents = matched;
+        } else {
+            console.log(`  movie match 0/${allTorrents.length} — keeping all (fallback)`);
         }
     }
 
