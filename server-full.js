@@ -103,13 +103,19 @@ async function getCount(key) { return (await redisCmd('GET', `zamunda:${key}`)) 
 // firing N concurrent redisCmd() calls, which is what made /stats + /dashboard flap to 0.
 async function redisPipeline(commands) {
     if (!UPSTASH_URL) return commands.map(() => null);
+    let out;
     try {
         const res = await axios.post(`${UPSTASH_URL}/pipeline`, commands, {
             headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
             timeout: 5000,
         });
-        return (Array.isArray(res.data) ? res.data : []).map(r => (r && r.error ? null : (r ? r.result : null)));
-    } catch (e) { return commands.map(() => null); }
+        const arr = Array.isArray(res.data) ? res.data : [];
+        out = commands.map((_, i) => { const r = arr[i]; return (r && !r.error && r.result !== undefined) ? r.result : null; });
+    } catch (e) { out = commands.map(() => null); }
+    // If the whole pipeline was rejected (Upstash returns per-item errors on quota exhaustion),
+    // fall back to individual commands — singles often still get through when a pipeline won't.
+    if (out.every(v => v === null)) out = await Promise.all(commands.map(c => redisCmd(...c)));
+    return out;
 }
 
 // Cached, fault-tolerant stats read. One pipeline call, 30s cache, and a last-good
@@ -129,12 +135,15 @@ async function getStats() {
     ]);
     const fields = ['configPageViews', 'installs', 'streamRequests', 'uniqueUsers', 'migratedUsers', 'newUsers'];
     const stats = {};
+    let gotAny = false;
     fields.forEach((f, i) => {
         const n = Number(r[i]);
-        stats[f] = (r[i] !== null && r[i] !== undefined && Number.isFinite(n)) ? n : (lastGoodStats[f] || 0);
+        if (r[i] !== null && r[i] !== undefined && Number.isFinite(n)) { stats[f] = n; lastGoodStats[f] = n; gotAny = true; }
+        else { stats[f] = lastGoodStats[f] || 0; }
     });
-    lastGoodStats = stats;
-    statsCache = { data: stats, time: Date.now() };
+    // Only cache a read that actually returned data, so a total backend failure (e.g. quota)
+    // can't lock in zeros for the whole TTL on a cold start — next call retries immediately.
+    if (gotAny) statsCache = { data: stats, time: Date.now() };
     return stats;
 }
 
