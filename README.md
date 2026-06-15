@@ -60,6 +60,8 @@ Open `http://localhost:7000/` to configure and install.
 
 Environment variables:
 - `PORT` — server port (default: 7000)
+- `PROXY_API_KEY` — **required** — X-Api-Key for the Cloudflare Zamunda proxy. Without it, searches return nothing. Never commit this; set it in the server `.env` only.
+- `DASHBOARD_KEY` — **required for the dashboard** — auth key for `/dashboard`, `/stats/history` and logs. Unset = dashboard is locked (fail-closed). Set it in the server `.env` only.
 - `UPSTASH_REDIS_REST_URL` — Upstash Redis URL for persistent stats/logs (optional)
 - `UPSTASH_REDIS_REST_TOKEN` — Upstash Redis token (optional)
 

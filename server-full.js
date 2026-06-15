@@ -8,8 +8,8 @@ const path = require('path');
 const app = express();
 app.use(cors());
 const PORT = process.env.PORT || 7000;
-const DASHBOARD_KEY = process.env.DASHBOARD_KEY || 'zmbg2026';
-const PROXY_API_KEY = '949b475e3b8f0f213584006545a619efb26a2216603edeb0';
+const DASHBOARD_KEY = process.env.DASHBOARD_KEY || '';   // set in server .env — no default, never in repo
+const PROXY_API_KEY = process.env.PROXY_API_KEY || '';   // set in server .env — no default, never in repo
 
 // =====================================================
 // CONFIG
@@ -41,15 +41,23 @@ let lastSnapshotDate = '';
 async function dailySnapshot() {
     const today = todayKey();
     if (today === lastSnapshotDate) return;
-    lastSnapshotDate = today;
-    const [users, migrated, newU] = await Promise.all([
-        scard('users'), scard('migratedUsers'), scard('newUsers'),
+    const r = await redisPipeline([
+        ['SCARD', 'zamunda:users'],
+        ['SCARD', 'zamunda:migratedUsers'],
+        ['SCARD', 'zamunda:newUsers'],
     ]);
+    // Never persist a snapshot built from a failed read — it would write 0 and poison the
+    // daily-delta history forever. Bail and let the next hourly tick retry.
+    if (r.some(v => v === null || v === undefined)) {
+        console.log('⚠️ Daily snapshot skipped (Redis read failed) — will retry next tick');
+        return;
+    }
+    lastSnapshotDate = today;
     const snap = JSON.stringify({
         date: today,
-        totalUsers: Number(users || 0),
-        migrated: Number(migrated || 0),
-        newUsers: Number(newU || 0),
+        totalUsers: Number(r[0]) || 0,
+        migrated: Number(r[1]) || 0,
+        newUsers: Number(r[2]) || 0,
     });
     await hset('dailyStats', today, snap);
     console.log(`📊 Daily snapshot saved: ${today}`);
@@ -90,6 +98,45 @@ async function hset(key, field, val) { return redisCmd('HSET', `zamunda:${key}`,
 async function hgetall(key) { return redisCmd('HGETALL', `zamunda:${key}`); }
 async function scard(key) { return redisCmd('SCARD', `zamunda:${key}`); }
 async function getCount(key) { return (await redisCmd('GET', `zamunda:${key}`)) || 0; }
+
+// Pipeline — run many commands in ONE Upstash REST request. Far fewer round-trips than
+// firing N concurrent redisCmd() calls, which is what made /stats + /dashboard flap to 0.
+async function redisPipeline(commands) {
+    if (!UPSTASH_URL) return commands.map(() => null);
+    try {
+        const res = await axios.post(`${UPSTASH_URL}/pipeline`, commands, {
+            headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
+            timeout: 5000,
+        });
+        return (Array.isArray(res.data) ? res.data : []).map(r => (r && r.error ? null : (r ? r.result : null)));
+    } catch (e) { return commands.map(() => null); }
+}
+
+// Cached, fault-tolerant stats read. One pipeline call, 30s cache, and a last-good
+// fallback so a transient Redis failure can never blank a field to 0 on the dashboard.
+let statsCache = { data: null, time: 0 };
+let lastGoodStats = {};
+const STATS_TTL = 30 * 1000;
+async function getStats() {
+    if (statsCache.data && Date.now() - statsCache.time < STATS_TTL) return statsCache.data;
+    const r = await redisPipeline([
+        ['GET', 'zamunda:configPage'],
+        ['GET', 'zamunda:installs'],
+        ['GET', 'zamunda:streams'],
+        ['SCARD', 'zamunda:users'],
+        ['SCARD', 'zamunda:migratedUsers'],
+        ['SCARD', 'zamunda:newUsers'],
+    ]);
+    const fields = ['configPageViews', 'installs', 'streamRequests', 'uniqueUsers', 'migratedUsers', 'newUsers'];
+    const stats = {};
+    fields.forEach((f, i) => {
+        const n = Number(r[i]);
+        stats[f] = (r[i] !== null && r[i] !== undefined && Number.isFinite(n)) ? n : (lastGoodStats[f] || 0);
+    });
+    lastGoodStats = stats;
+    statsCache = { data: stats, time: Date.now() };
+    return stats;
+}
 
 // Recent logs — store last 100 events in a Redis list
 async function logEvent(type, msg) {
@@ -969,29 +1016,15 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
 // Auth middleware for admin endpoints
 function adminAuth(req, res, next) {
     const key = req.query.key || req.headers['x-dashboard-key'];
-    if (key === DASHBOARD_KEY) return next();
+    // Fail closed: if DASHBOARD_KEY is unset, deny all (never match an empty key).
+    if (DASHBOARD_KEY && key === DASHBOARD_KEY) return next();
     res.status(403).json({ error: 'Unauthorized. Add ?key=YOUR_KEY' });
 }
 
 // Stats — JSON API (public, used by config page)
 app.get('/stats', async (req, res) => {
-    const [configPage, installs, streams, users, migrated, newU] = await Promise.all([
-        getCount('configPage'),
-        getCount('installs'),
-        getCount('streams'),
-        scard('users'),
-        scard('migratedUsers'),
-        scard('newUsers'),
-    ]);
-    res.json({
-        configPageViews: Number(configPage),
-        installs: Number(installs),
-        streamRequests: Number(streams),
-        uniqueUsers: Number(users || 0),
-        migratedUsers: Number(migrated || 0),
-        newUsers: Number(newU || 0),
-        persistent: !!UPSTASH_URL,
-    });
+    const s = await getStats();
+    res.json({ ...s, persistent: !!UPSTASH_URL });
 });
 
 // Stats history (auth required)
@@ -1009,15 +1042,9 @@ app.get('/stats/history', adminAuth, async (req, res) => {
 
 // Stats — Visual dashboard (auth required)
 app.get('/dashboard', adminAuth, async (req, res) => {
-    const [configPage, installs, streams, users, migrated, newU, historyRaw] = await Promise.all([
-        getCount('configPage'),
-        getCount('installs'),
-        getCount('streams'),
-        scard('users'),
-        scard('migratedUsers'),
-        scard('newUsers'),
-        hgetall('dailyStats'),
-    ]);
+    const s = await getStats();
+    const { configPageViews: configPage, installs, streamRequests: streams, uniqueUsers: users, migratedUsers: migrated, newUsers: newU } = s;
+    const historyRaw = await hgetall('dailyStats');
     // Build history from snapshots + daily counters
     const history = [];
     if (historyRaw && historyRaw.length > 0) {
@@ -1025,13 +1052,14 @@ app.get('/dashboard', adminAuth, async (req, res) => {
         for (let i = 0; i < historyRaw.length; i += 2) {
             try { const s = JSON.parse(historyRaw[i + 1]); dates.push(s); } catch (e) {}
         }
-        // Fetch daily counters for each date
-        const dailyCounts = await Promise.all(dates.map(async (s) => {
-            const [dayStreams, dayViews] = await Promise.all([
-                getDailyCount(s.date, 'streams'),
-                getDailyCount(s.date, 'pageViews'),
-            ]);
-            return { ...s, dayStreams, dayViews };
+        // Fetch all daily counters in ONE pipeline request (was 2×N concurrent GETs → flapped)
+        const cmds = [];
+        dates.forEach(d => { cmds.push(['GET', `zamunda:daily:${d.date}:streams`], ['GET', `zamunda:daily:${d.date}:pageViews`]); });
+        const dc = await redisPipeline(cmds);
+        const dailyCounts = dates.map((d, i) => ({
+            ...d,
+            dayStreams: Number(dc[i * 2]) || 0,
+            dayViews: Number(dc[i * 2 + 1]) || 0,
         }));
         dailyCounts.sort((a, b) => b.date.localeCompare(a.date));
         history.push(...dailyCounts);
@@ -1172,7 +1200,7 @@ app.get('/logs', adminAuth, async (req, res) => {
 });
 
 // Health
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.0' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.1' }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1184,7 +1212,10 @@ process.on('uncaughtException', (err) => {
     logEvent('ERROR', `Uncaught exception: ${err?.message || 'unknown'}`);
 });
 
+if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda proxy calls will be rejected (no search results).');
+if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
+
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.1.0 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.1.1 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
