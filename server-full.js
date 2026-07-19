@@ -210,7 +210,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.1.2',
+        version: '2.1.4',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda.RIP архива (${mode} режим)`
@@ -242,7 +242,8 @@ async function getMetadata(type, imdbId) {
     try {
         const res = await axios.get(`${CINEMETA_API}/${type}/${imdbId}.json`, { timeout: 5000 });
         const meta = res.data.meta;
-        setCached(key, meta);
+        // Only cache usable metadata — caching a nameless meta poisons the key for the full TTL
+        if (meta && meta.name) setCached(key, meta);
         return meta;
     } catch (e) {
         console.error('Cinemeta error:', e.message);
@@ -427,7 +428,28 @@ function decodeBencode(buf, pos = 0, depth = 0) {
     return [str, colon + 1 + len];
 }
 
-async function resolveFileIdx(infohash, season, episode) {
+// Run async work over a list with a ceiling on how many run at once
+async function mapLimit(items, limit, fn) {
+    let next = 0;
+    const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+        while (next < items.length) {
+            const i = next++;
+            await fn(items[i], i);
+        }
+    });
+    await Promise.all(workers);
+}
+
+// Fetch + decode a torrent's file list, cached BY INFOHASH.
+// A season pack serves every episode in it, so one fetch now covers S01E01..S01E10
+// instead of re-downloading the same .torrent once per episode request.
+// Failures are negative-cached (`false`) so a dead/missing hash isn't retried
+// — that retry storm was ~5.4K wasted 5s requests per week, all in the user's path.
+async function fetchTorrentFiles(infohash) {
+    const key = `torrentfiles:${infohash}`;
+    const cached = getCached(key);
+    if (cached !== null) return cached;          // `false` = known-bad, don't refetch
+
     try {
         const res = await axios.get(
             `https://itorrents.org/torrent/${infohash}.torrent`,
@@ -435,28 +457,38 @@ async function resolveFileIdx(infohash, season, episode) {
         );
         const [torrent] = decodeBencode(Buffer.from(res.data));
         const info = torrent.info || torrent['info'];
-        if (!info || !info.files) return null;
-
-        const s = String(season).padStart(2, '0');
-        const e = String(episode).padStart(2, '0');
-        const pattern = new RegExp(`S${s}E${e}\\b`, 'i');
-
-        const videoExts = /\.(mkv|mp4|avi|mov|m4v|ts|webm)$/i;
-        let videoIdx = 0;
-        for (let i = 0; i < info.files.length; i++) {
-            const path = (info.files[i].path || []).map(p => p.toString()).join('/');
-            if (!videoExts.test(path)) continue;
-            if (pattern.test(path)) {
-                console.log(`  📁 fileIdx ${videoIdx} → ${path}`);
-                return videoIdx;
-            }
-            videoIdx++;
-        }
-        return null;
+        // Single-file torrents have no `files` list — nothing to index into
+        const files = (info && info.files)
+            ? info.files.map(f => (f.path || []).map(p => p.toString()).join('/'))
+            : false;
+        setCached(key, files);
+        return files;
     } catch (e) {
         console.error('  ⚠️ fileIdx resolve failed:', e.message);
-        return null;
+        setCached(key, false);
+        return false;
     }
+}
+
+async function resolveFileIdx(infohash, season, episode) {
+    const files = await fetchTorrentFiles(infohash);
+    if (!files) return null;
+
+    const s = String(season).padStart(2, '0');
+    const e = String(episode).padStart(2, '0');
+    const pattern = new RegExp(`S${s}E${e}\\b`, 'i');
+
+    const videoExts = /\.(mkv|mp4|avi|mov|m4v|ts|webm)$/i;
+    let videoIdx = 0;
+    for (const path of files) {
+        if (!videoExts.test(path)) continue;
+        if (pattern.test(path)) {
+            console.log(`  📁 fileIdx ${videoIdx} → ${path}`);
+            return videoIdx;
+        }
+        videoIdx++;
+    }
+    return null;
 }
 
 // =====================================================
@@ -731,6 +763,11 @@ async function resolveStreams(type, fullId, config) {
         logEvent('MISS', `${type} ${imdbId} — Cinemeta returned no metadata`);
         return [];
     }
+    if (!meta.name) {
+        // Cinemeta answered 200 with a partial record — every query below would be "undefined"
+        logEvent('MISS', `${type} ${imdbId} — Cinemeta metadata has no name`);
+        return [];
+    }
 
     const label = `${type} "${meta.name}"${season ? ` S${season}E${episode}` : ''}`;
     console.log(`\n🔍 ${label} [${config.debrid}|${config.content}]`);
@@ -880,10 +917,11 @@ async function resolveStreams(type, fullId, config) {
     if (season && episode) {
         const packs = filtered.filter(t => t._matchType === 'season' || t._matchType === 'fallback');
         if (packs.length > 0) {
-            await Promise.all(packs.map(async (t) => {
+            // Capped: a cold result set would otherwise fire one 5s request per pack, all at once
+            await mapLimit(packs, 5, async (t) => {
                 const idx = await resolveFileIdx(t._infohash, season, episode);
                 if (idx !== null) t._resolvedFileIdx = idx;
-            }));
+            });
         }
     }
 
@@ -1257,7 +1295,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.1.2</span>
+<span style="font-size:12px;color:var(--dim)">v2.1.4</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1286,7 +1324,7 @@ app.get('/logs', adminAuth, async (req, res) => {
 });
 
 // Health
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.2' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.4' }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1302,6 +1340,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.1.2 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.1.4 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
