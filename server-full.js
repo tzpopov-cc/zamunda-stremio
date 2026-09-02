@@ -19,6 +19,17 @@ const CINEMETA_API = 'https://v3-cinemeta.strem.io/meta';
 const RD_API = 'https://api.real-debrid.com/rest/1.0';
 const TB_API = 'https://api.torbox.app/v1';
 
+// Public origin of this addon — used to build absolute stream URLs.
+const PUBLIC_URL = process.env.PUBLIC_URL || 'https://zamunda-stremio.tzkppv.com';
+
+// Notice videos. A stream object must carry one of url/infoHash/ytId/externalUrl, and an
+// external link is fatal on LG and Samsung TVs: their Stremio builds hang on an endless
+// spinner instead of rendering the row (Stremio/stremio-bugs#1092 — external links are
+// banned by both TV app stores). Every informational row therefore points at a short
+// self-hosted MP4, which every platform can render and play.
+const NOTICE_DOWN_URL = `${PUBLIC_URL}/notice-down.mp4`;   // upstream source unreachable
+const NOTICE_INFO_URL = `${PUBLIC_URL}/notice-info.mp4`;   // generic "this row is a message"
+
 const cache = new Map();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
@@ -210,7 +221,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.1.5',
+        version: '2.1.6',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda.RIP архива (${mode} режим)`
@@ -792,9 +803,9 @@ function unavailableStreams(config) {
     const streams = [{
         name: '⚠️ Zamunda BG',
         title: bg
-            ? 'Източникът не отговаря — проблемът не е в добавката.\nНатиснете за статус →'
-            : 'The torrent source is not responding — this is not an addon fault.\nTap for status →',
-        externalUrl: 'https://zamunda-stremio.tzkppv.com/'
+            ? 'Източникът не отговаря — проблемът не е в добавката.\nСтатус: zamunda-stremio.tzkppv.com'
+            : 'The torrent source is not responding — this is not an addon fault.\nStatus: zamunda-stremio.tzkppv.com',
+        url: NOTICE_DOWN_URL
     }];
     streams._noCache = true;   // array property: not serialised into the JSON response
     return streams;
@@ -988,16 +999,14 @@ async function resolveStreams(type, fullId, config) {
     const bgHint = config._bgFallback ? [{
         name: `⚠️ Няма БГ аудио\nZamunda BG`,
         title: `Няма торенти с БГ аудио.\nПоказваме всички ${filtered.length} резултата.`,
-        externalUrl: 'https://zamunda-stremio-qd0j.onrender.com',
-        behaviorHints: { notWebReady: true }
+        url: NOTICE_INFO_URL
     }] : [];
 
     // Quality fallback hint — prepended to results when quality filter found no matching quality
     const qualHint = config._qualityFallback ? [{
         name: `⚠️ Няма ${config.quality}\nZamunda BG`,
         title: `Няма торенти в избраното качество.\nПоказваме всички ${filtered.length} резултата.`,
-        externalUrl: 'https://zamunda-stremio.tzkppv.com',
-        behaviorHints: { notWebReady: true }
+        url: NOTICE_INFO_URL
     }] : [];
 
     const hints = [...bgHint, ...qualHint];
@@ -1016,8 +1025,7 @@ async function resolveStreams(type, fullId, config) {
                 title: config.lang === 'bg'
                     ? `TorBox токенът е изтекъл или невалиден.\nПреконфигурирай добавката с нов токен.`
                     : `TorBox token expired or invalid.\nReconfigure the addon with a new token.`,
-                externalUrl: 'https://zamunda-stremio.tzkppv.com',
-                behaviorHints: { notWebReady: true }
+                url: NOTICE_INFO_URL
             }];
             const p2pStreams = filtered.map(t => buildStream(t, null, 'p2p'));
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
@@ -1350,7 +1358,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.1.5</span>
+<span style="font-size:12px;color:var(--dim)">v2.1.6</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1379,7 +1387,18 @@ app.get('/logs', adminAuth, async (req, res) => {
 });
 
 // Health
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.5' }));
+// Notice videos — see NOTICE_DOWN_URL above. Single-segment paths, so the /:config
+// routes (which need at least two segments) can never shadow them.
+['notice-down.mp4', 'notice-info.mp4'].forEach(file => {
+    app.get(`/${file}`, (req, res) => {
+        res.type('video/mp4');
+        res.sendFile(path.join(__dirname, file), err => {
+            if (err && !res.headersSent) res.status(404).end();
+        });
+    });
+});
+
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.6' }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1395,6 +1414,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.1.5 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.1.6 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
