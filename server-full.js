@@ -210,7 +210,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.1.4',
+        version: '2.1.5',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda.RIP архива (${mode} режим)`
@@ -251,6 +251,36 @@ async function getMetadata(type, imdbId) {
     }
 }
 
+// Live upstream health, derived only from real network attempts (our own cache hits prove nothing).
+// Drives the status notice on the config page so it self-clears on recovery.
+//
+// Judged on the FAILURE RATIO, not on the last success: during the Aug-2026 outage the source's
+// own CDN kept answering a minority of queries from stale cache with a real HTTP 200, so any
+// "one success means healthy" rule reports ok while nearly every user search returns nothing.
+const upstream = { events: [] };            // [{ t, ok }], trimmed to the window
+const UPSTREAM_WINDOW = 15 * 60 * 1000;
+const UPSTREAM_MIN_SAMPLE = 5;              // below this, say nothing rather than guess
+const UPSTREAM_RECENT = 20;                 // judge on the last N attempts so recovery clears fast
+const UPSTREAM_DOWN_RATIO = 0.5;            // most searches failing = down, as users experience it
+
+function recordUpstream(ok) {
+    const now = Date.now();
+    upstream.events.push({ t: now, ok });
+    const cutoff = now - UPSTREAM_WINDOW;
+    while (upstream.events.length && upstream.events[0].t < cutoff) upstream.events.shift();
+    if (upstream.events.length > 2000) upstream.events.splice(0, upstream.events.length - 2000);
+}
+
+function sourceStatus() {
+    const cutoff = Date.now() - UPSTREAM_WINDOW;
+    // Only the newest attempts count: judging the whole window would keep the notice up for
+    // minutes after the source came back, which is the stale-notice bug in another costume.
+    const ev = upstream.events.filter(e => e.t >= cutoff).slice(-UPSTREAM_RECENT);
+    if (ev.length < UPSTREAM_MIN_SAMPLE) return 'unknown';   // too little evidence to claim either way
+    const failed = ev.filter(e => !e.ok).length;
+    return (failed / ev.length) >= UPSTREAM_DOWN_RATIO ? 'down' : 'ok';
+}
+
 async function searchZamunda(query) {
     const key = `search:${query.toLowerCase()}`;
     const cached = getCached(key);
@@ -262,11 +292,13 @@ async function searchZamunda(query) {
             headers: { 'User-Agent': 'Mozilla/5.0 ZamundaStremio/1.0', 'X-Api-Key': PROXY_API_KEY }
         });
         const data = res.data || [];
+        recordUpstream(true);
         setCached(key, data);
         return data;
     } catch (e) {
+        recordUpstream(false);
         console.error('Zamunda search error:', e.message);
-        return [];
+        return null;   // null = upstream unreachable; [] = upstream answered with no matches
     }
 }
 
@@ -753,6 +785,21 @@ function matchesMovie(title, name, year, bgName) {
 // =====================================================
 // MAIN RESOLVER
 // =====================================================
+// Shown when the torrent source itself is unreachable. Marked `_noCache` so the notice
+// can never be stored in the stream cache and outlive the outage it describes.
+function unavailableStreams(config) {
+    const bg = (config.lang || 'bg') === 'bg';
+    const streams = [{
+        name: '⚠️ Zamunda BG',
+        title: bg
+            ? 'Източникът не отговаря — проблемът не е в добавката.\nНатиснете за статус →'
+            : 'The torrent source is not responding — this is not an addon fault.\nTap for status →',
+        externalUrl: 'https://zamunda-stremio.tzkppv.com/'
+    }];
+    streams._noCache = true;   // array property: not serialised into the JSON response
+    return streams;
+}
+
 async function resolveStreams(type, fullId, config) {
     const [imdbId, seasonStr, episodeStr] = fullId.split(':');
     const season = seasonStr ? parseInt(seasonStr) : null;
@@ -789,8 +836,10 @@ async function resolveStreams(type, fullId, config) {
     }
 
     let allTorrents = [];
+    let upstreamFailed = false;
     for (const q of queries) {
         const results = await searchZamunda(q);
+        if (results === null) { upstreamFailed = true; continue; }
         allTorrents = allTorrents.concat(results);
     }
 
@@ -806,6 +855,12 @@ async function resolveStreams(type, fullId, config) {
     console.log(`  ${allTorrents.length} unique torrents`);
 
     if (allTorrents.length === 0) {
+        // An unreachable source is not the same as "this title has no torrents". Returning []
+        // for both makes an outage look like a broken addon, so name it.
+        if (upstreamFailed) {
+            logEvent('DOWN', `${label} — source unavailable`);
+            return unavailableStreams(config);
+        }
         logEvent('MISS', `${label} — 0 results from zamunda`);
         return [];
     }
@@ -1132,7 +1187,7 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         }
 
         const streams = await resolveStreams(type, id, config);
-        if (streams.length > 0) setCached(cacheKey, streams);
+        if (streams.length > 0 && !streams._noCache) setCached(cacheKey, streams);
         res.json({ streams });
     } catch (e) {
         console.error('Stream handler error:', e);
@@ -1152,7 +1207,7 @@ function adminAuth(req, res, next) {
 // Stats — JSON API (public, used by config page)
 app.get('/stats', async (req, res) => {
     const s = await getStats();
-    res.json({ ...s, persistent: true });
+    res.json({ ...s, persistent: true, sourceStatus: sourceStatus() });
 });
 
 // Stats history (auth required)
@@ -1295,7 +1350,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.1.4</span>
+<span style="font-size:12px;color:var(--dim)">v2.1.5</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1324,7 +1379,7 @@ app.get('/logs', adminAuth, async (req, res) => {
 });
 
 // Health
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.4' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.5' }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1340,6 +1395,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.1.4 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.1.5 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });

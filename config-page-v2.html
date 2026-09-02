@@ -9,6 +9,30 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        .source-alert {
+            display: none;
+            margin: 0 0 26px;
+            padding: 16px 18px;
+            border: 1px solid rgba(245, 90, 90, 0.45);
+            border-left: 3px solid #f55a5a;
+            border-radius: 10px;
+            background: rgba(245, 90, 90, 0.07);
+            font-family: var(--font-body);
+        }
+        .source-alert.show { display: block; }
+        .source-alert-title {
+            font-family: var(--font-display);
+            font-size: 14px;
+            letter-spacing: 0.5px;
+            color: #f55a5a;
+            margin-bottom: 6px;
+        }
+        .source-alert-body {
+            font-size: 13px;
+            line-height: 1.55;
+            color: var(--text-dim);
+        }
+
         :root {
             --gold: #f5d020;
             --gold-dim: rgba(245, 208, 32, 0.12);
@@ -496,6 +520,13 @@
 </div>
 
 <div class="wrap">
+
+    <!-- Shown only while /stats reports the torrent source as unreachable -->
+    <div class="source-alert" id="sourceAlert">
+        <div class="source-alert-title" data-bg="Източникът на торенти е недостъпен" data-en="The torrent source is unreachable"></div>
+        <div class="source-alert-body" data-bg="Търсенията не връщат резултати, защото сайтовете-източници не отговарят — това не е повреда в добавката и няма какво да настройвате. Добавката ще проработи веднага щом източникът се върне." data-en="Searches return no results because the source sites are not responding — this is not an addon fault and there is nothing for you to reconfigure. The addon will work again as soon as the source returns."></div>
+    </div>
+
     <!-- Header -->
     <div class="header">
         <img src="https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png"
@@ -503,7 +534,7 @@
         <h1>Zamunda BG</h1>
         <p class="subtitle" data-bg="Stremio addon за филми и сериали" data-en="Stremio addon for movies & series"></p>
         <p class="sources" style="font-size:11px; color:var(--text-muted); margin-top:6px; letter-spacing:1px;" data-bg="Zamunda · ArenaBG · Zelka" data-en="Zamunda · ArenaBG · Zelka"></p>
-        <div class="version-badge">v2.1.4</div>
+        <div class="version-badge">v2.1.5</div>
         <div class="stats-bar header-stats-bar" id="headerStatsBar">
             <div class="stat">
                 <div class="stat-value" id="statUsersHeader">—</div>
@@ -725,6 +756,20 @@
     <!-- TAB: Changelog                      -->
     <!-- ═══════════════════════════════════ -->
     <div class="tab-content" id="tab-changelog">
+
+        <div class="changelog-entry">
+            <div class="changelog-header">
+                <span class="changelog-version">v2.1.5</span>
+                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-date">2026-08-28</span>
+            </div>
+            <div class="changelog-body">
+                <ul>
+                    <li data-bg="Когато източникът на торенти не отговаря, добавката вече го казва ясно вместо да показва празен списък" data-en="When the torrent source is unreachable the addon now says so, instead of showing an empty list"></li>
+                    <li data-bg="Тази страница показва предупреждение, докато източникът е недостъпен" data-en="This page shows a warning while the source is unreachable"></li>
+                </ul>
+            </div>
+        </div>
 
         <div class="changelog-entry">
             <div class="changelog-header">
@@ -1016,6 +1061,8 @@ fetch('/stats')
         document.getElementById('statStreams').textContent = roundDown(s.streamRequests) + '+';
         document.getElementById('statUsersHeader').textContent = roundDown(s.uniqueUsers) + '+';
         document.getElementById('statStreamsHeader').textContent = roundDown(s.streamRequests) + '+';
+        // Only 'down' shows the notice — 'unknown' (a quiet period) must stay silent.
+        if (s.sourceStatus === 'down') document.getElementById('sourceAlert').classList.add('show');
     })
     .catch(() => {});
 
