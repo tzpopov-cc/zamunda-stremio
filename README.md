@@ -1,8 +1,8 @@
 # Zamunda BG — Stremio Addon
 
-Stremio addon that searches the [zamunda.rip](https://zamunda.rip) archive (Zamunda + ArenaBG + Zelka, 450K+ torrents) for movies and series.
+Stremio addon that searches the [zamunda.life](https://zamunda.life) archive (Zamunda + ArenaBG + Zelka, 450K+ torrents) for movies and series.
 
-Stremio addon, който търси в [zamunda.rip](https://zamunda.rip) архива (Zamunda + ArenaBG + Zelka, 450K+ торенти) за филми и сериали.
+Stremio addon, който търси в [zamunda.life](https://zamunda.life) архива (Zamunda + ArenaBG + Zelka, 450K+ торенти) за филми и сериали.
 
 ## Install / Инсталиране
 
@@ -35,14 +35,14 @@ Visit the config page, choose your settings, and click "Install in Stremio".
 ## How it works / Как работи
 
 1. Stremio sends an IMDB ID when you open a movie/series
-2. Addon fetches the title from Cinemeta, searches zamunda.rip API
+2. Addon fetches the title from Cinemeta, searches the zamunda.life API
 3. **P2P mode**: returns torrent info hashes — Stremio streams P2P
 4. **RD/TorBox mode**: checks debrid cache, resolves cached torrents to HTTP streams — instant playback
 
 ---
 
 1. Stremio изпраща IMDB ID когато отвориш филм/сериал
-2. Addon-ът взима заглавието от Cinemeta и търси в zamunda.rip API
+2. Addon-ът взима заглавието от Cinemeta и търси в zamunda.life API
 3. **P2P режим**: връща info hash-ове — Stremio стриймва директно P2P
 4. **RD/TorBox режим**: проверява кеша на дебрид услугата, resolve-ва кеширани торенти до HTTP stream — моментално пускане
 

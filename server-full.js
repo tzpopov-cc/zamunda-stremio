@@ -2,6 +2,7 @@ const express = require('express');
 const axios = require('axios');
 const cors = require('cors');
 const crypto = require('crypto');
+const { parse: parseMedia } = require('parsium-media');
 const fs = require('fs');
 const path = require('path');
 
@@ -15,6 +16,11 @@ const PROXY_API_KEY = process.env.PROXY_API_KEY || '';   // set in server .env �
 // CONFIG
 // =====================================================
 const ZAMUNDA_API = 'https://api-proxy.tzkppv.com';
+// Upstreams tried in order until one answers. A comma-separated ZAMUNDA_PROVIDERS
+// overrides it, so a new proxy or mirror is an env change and a restart — never a
+// code edit under pressure while the addon is down.
+const PROVIDERS = (process.env.ZAMUNDA_PROVIDERS || ZAMUNDA_API)
+    .split(',').map(x => x.trim()).filter(Boolean);
 const CINEMETA_API = 'https://v3-cinemeta.strem.io/meta';
 const RD_API = 'https://api.real-debrid.com/rest/1.0';
 const TB_API = 'https://api.torbox.app/v1';
@@ -221,13 +227,13 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.1.6',
+        version: '2.3.0',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
-            ? `Филми и сериали от Zamunda.RIP архива (${mode} режим)`
-            : `Movies and series from Zamunda.RIP archive (${mode} mode)`,
+            ? `Филми и сериали от Zamunda архива (${mode} режим)`
+            : `Movies and series from Zamunda archive (${mode} mode)`,
         logo: 'https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png',
-        background: 'https://zamunda.rip/static/pirateship.png',
+        background: 'https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png',
         types: ['movie', 'series'],
         catalogs: [],
         resources: ['stream'],
@@ -274,6 +280,90 @@ const UPSTREAM_MIN_SAMPLE = 5;              // below this, say nothing rather th
 const UPSTREAM_RECENT = 20;                 // judge on the last N attempts so recovery clears fast
 const UPSTREAM_DOWN_RATIO = 0.5;            // most searches failing = down, as users experience it
 
+// =====================================================
+// PERSISTENT TORRENT INDEX
+// =====================================================
+// zamunda.life is the ONLY surviving aggregator: zamunda.rip has been CF 521 since
+// 2026-08-25 and zelka.org / arenabg.com serve a seizure page. What .life serves is a
+// FROZEN archive of those dead sites — no new releases are arriving. So every result set
+// we see is worth keeping: it answers repeat lookups without touching the network, and it
+// keeps the addon working if .life goes away too.
+//
+// Append-only JSONL: a hard kill can only damage the last line, and that line is skipped
+// on load. Rebuilt into a Map at boot, compacted once duplicates outnumber live queries.
+const INDEX_FILE = path.join(DATA_DIR, 'torrent-index.jsonl');
+const INDEX_FRESH_MS = 60 * 60 * 1000;                  // younger: serve, skip the network
+const INDEX_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;      // older: still served if upstream is down
+const index = new Map();                                // query -> { ts, rows }
+let indexLines = 0;
+
+function idxKey(q) { return (q || '').trim().toLowerCase(); }
+
+function idxLoad() {
+    try {
+        for (const line of fs.readFileSync(INDEX_FILE, 'utf8').split('\n')) {
+            if (!line) continue;
+            try {
+                const e = JSON.parse(line);
+                if (e && e.q && Array.isArray(e.rows)) {
+                    index.set(e.q, { ts: e.ts || 0, rows: e.rows });
+                    indexLines++;
+                }
+            } catch (err) { /* torn final line after a hard kill — expected, skip it */ }
+        }
+        const rows = [...index.values()].reduce((n, e) => n + e.rows.length, 0);
+        console.log(`🗂  Torrent index: ${index.size} queries, ${rows} rows`);
+    } catch (e) {
+        console.log(`🗂  No torrent index at ${INDEX_FILE} (${e.code || e.message}) — starting fresh`);
+    }
+}
+
+function idxCompact() {
+    try {
+        const out = [...index.entries()]
+            .map(([q, e]) => JSON.stringify({ q, ts: e.ts, rows: e.rows })).join('\n') + '\n';
+        fs.writeFileSync(`${INDEX_FILE}.tmp`, out);
+        fs.renameSync(`${INDEX_FILE}.tmp`, INDEX_FILE);   // atomic replace, as with stats.json
+        indexLines = index.size;
+        console.log(`🗂  Index compacted to ${index.size} queries`);
+    } catch (e) {
+        console.error('⚠️ Index compaction failed:', e.message);
+    }
+}
+
+function idxPut(q, rows) {
+    const key = idxKey(q);
+    // Never store an empty answer: "no results" is usually a bad upstream day, and caching
+    // it would teach the index that a title has nothing.
+    if (!key || !Array.isArray(rows) || !rows.length) return;
+    const entry = { q: key, ts: Date.now(), rows };
+    index.set(key, { ts: entry.ts, rows });
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.appendFileSync(INDEX_FILE, JSON.stringify(entry) + '\n');
+        indexLines++;
+        if (indexLines > index.size * 2 + 50) idxCompact();
+    } catch (e) {
+        console.error('⚠️ Index append failed:', e.message);
+    }
+}
+
+function idxGet(q) {
+    const e = index.get(idxKey(q));
+    if (!e) return null;
+    if (Date.now() - e.ts > INDEX_MAX_AGE_MS) return null;
+    return e;
+}
+
+function idxStats() {
+    return {
+        queries: index.size,
+        rows: [...index.values()].reduce((n, e) => n + e.rows.length, 0),
+    };
+}
+
+idxLoad();
+
 function recordUpstream(ok) {
     const now = Date.now();
     upstream.events.push({ t: now, ok });
@@ -296,25 +386,58 @@ async function searchZamunda(query) {
     const key = `search:${query.toLowerCase()}`;
     const cached = getCached(key);
     if (cached) return cached;
-    try {
-        const res = await axios.get(ZAMUNDA_API, {
-            params: { q: query, limit: 50 },
-            timeout: 10000,
-            headers: { 'User-Agent': 'Mozilla/5.0 ZamundaStremio/1.0', 'X-Api-Key': PROXY_API_KEY }
-        });
-        const data = res.data || [];
-        recordUpstream(true);
-        setCached(key, data);
-        return data;
-    } catch (e) {
-        recordUpstream(false);
-        console.error('Zamunda search error:', e.message);
-        return null;   // null = upstream unreachable; [] = upstream answered with no matches
+    const stored = idxGet(query);
+    // Fresh in our own index — answer from it and never touch the network.
+    if (stored && Date.now() - stored.ts < INDEX_FRESH_MS) {
+        setCached(key, stored.rows);
+        return stored.rows;
     }
+
+    for (const base of PROVIDERS) {
+        try {
+            const res = await axios.get(base, {
+                params: { q: query, limit: 50 },
+                timeout: 10000,
+                headers: { 'User-Agent': 'Mozilla/5.0 ZamundaStremio/1.0', 'X-Api-Key': PROXY_API_KEY }
+            });
+            const data = Array.isArray(res.data) ? res.data : [];
+            recordUpstream(true);
+            idxPut(query, data);
+            setCached(key, data);
+            return data;
+        } catch (e) {
+            console.error(`Zamunda search error via ${base}:`, e.message);
+        }
+    }
+    recordUpstream(false);
+
+    // Every provider failed. Serve what we already know rather than telling the user the
+    // title has nothing — this is the entire reason the index exists.
+    if (stored) {
+        logEvent('INDEX', `${query} — ${stored.rows.length} rows from local index (upstream down)`);
+        setCached(key, stored.rows);
+        return stored.rows;
+    }
+    return null;   // null = no provider reachable AND nothing indexed
+}
+
+// Parse a release name once and memoise it on the torrent. parsium-media is the same
+// engine IntellDebridSearch uses; it understands resolution, source, codec, bit depth,
+// HDR flavour, audio codec, channel layout and language tags.
+function analyse(t) {
+    if (t._p) return t._p;
+    let p = {};
+    try { p = parseMedia(t.title || '') || {}; } catch (e) { p = {}; }
+    t._p = p;
+    return p;
 }
 
 function isBgAudio(torrent) {
     if (torrent.is_bgaudio === 1) return true;
+    // parsium reads BG.AUDIO / BG.DUBBED as a Bulgarian language tag, but misses bare
+    // "BGAUDIO" (it reads it as a release group), so the regex below stays essential.
+    const langs = analyse(torrent).languages || [];
+    if (langs.some(l => (l.code || '') === 'bul' || /bulgar/i.test(l.label || ''))) return true;
     const text = ((torrent.title || '') + ' ' + (torrent.description || '')).toLowerCase();
     return /bgaudio|bg[\.\-\s_]?audio|bg[\.\-\s_]?dub|bulgarian|български|бг[\.\-\s_]?аудио|бг[\.\-\s_]?дублаж|dualaudio|dual[\.\-\s_]audio|bul[\.\-\s_]eng|bultor/i.test(text);
 }
@@ -330,13 +453,24 @@ function parseSize(sizeStr) {
     return num;
 }
 
-function detectQuality(title, sizeStr) {
-    const t = title.toUpperCase();
+// Resolution keys must stay inside the set the config filter knows: 4k|1080p|720p|sd.
+function detectQuality(torrent) {
+    const p = analyse(torrent);
+    const n = parseInt((p.resolution || '').replace(/[^0-9]/g, ''), 10) || 0;
+    if (n >= 2160) return { tag: '4K', key: '4k', score: 4 };
+    if (n >= 1440) return { tag: '1440p', key: '1080p', score: 3.5 };
+    if (n >= 1080) return { tag: '1080p', key: '1080p', score: 3 };
+    if (n >= 720) return { tag: '720p', key: '720p', score: 2 };
+    if (n > 0) return { tag: 'SD', key: 'sd', score: 1 };
+
+    // parsium found no resolution — Zamunda names are irregular, so keep the old
+    // title regex and the size heuristic behind it.
+    const t = (torrent.title || '').toUpperCase();
     if (/2160P|\b4K\b|UHD/.test(t)) return { tag: '4K', key: '4k', score: 4 };
     if (/1080P|FHD|FULL.?HD/.test(t)) return { tag: '1080p', key: '1080p', score: 3 };
     if (/720P/.test(t)) return { tag: '720p', key: '720p', score: 2 };
     if (/DVDRIP|XVID|480P|\bSD\b|BDRIP|BRRIP/.test(t)) return { tag: 'SD', key: 'sd', score: 1 };
-    const gb = parseSize(sizeStr);
+    const gb = parseSize(torrent.size);
     if (gb > 15) return { tag: '4K', key: '4k', score: 4 };
     if (gb > 4) return { tag: '1080p', key: '1080p', score: 3 };
     if (gb > 1.5) return { tag: '720p', key: '720p', score: 2 };
@@ -344,16 +478,44 @@ function detectQuality(title, sizeStr) {
     return { tag: '?', key: 'unknown', score: 0 };
 }
 
-function detectExtras(title) {
-    const t = title.toUpperCase();
+// Short badges for the Stremio name line. Distinguishes DV from HDR10+ from HDR10 and
+// reports the real channel layout, both of which the old title regex got wrong.
+function hdrTag(p) {
+    const hdr = p.hdr || [];
+    if (hdr.some(h => /DV|DOLBY.?VISION/i.test(h))) return 'DV';
+    if (hdr.some(h => /HDR10\+/i.test(h))) return 'HDR10+';
+    if (hdr.length) return 'HDR';
+    return null;
+}
+
+function detectExtras(torrent) {
+    const p = analyse(torrent);
     const tags = [];
-    if (/HDR|DOVI|DOLBY.VISION/.test(t)) tags.push('HDR');
-    if (/HEVC|X265|H\.?265/.test(t)) tags.push('HEVC');
-    if (/REMUX/.test(t)) tags.push('REMUX');
-    if (/TRUEHD|ATMOS/.test(t)) tags.push('Atmos');
-    if (/DTS/.test(t)) tags.push('DTS');
-    if (/5\.1|7\.1/.test(t)) tags.push('5.1');
-    return tags;
+    const hdr = hdrTag(p);
+    if (hdr) tags.push(hdr);
+    if (p.isRemux) tags.push('REMUX');
+    if (/265|HEVC/i.test(p.codec || '')) tags.push('HEVC');
+    if (p.bitDepth === '10-bit') tags.push('10bit');
+    const audio = p.audio || [];
+    if (audio.some(a => /ATMOS/i.test(a))) tags.push('Atmos');
+    else if (audio.some(a => /TRUEHD/i.test(a))) tags.push('TrueHD');
+    else if (audio.some(a => /DTS[-\s]?(HD|X)/i.test(a))) tags.push('DTS-HD');
+    else if (audio.some(a => /DTS/i.test(a))) tags.push('DTS');
+    const ch = (p.channels || [])[0];
+    if (ch) tags.push(ch);
+
+    if (tags.length) return tags;
+    // Nothing parsed — fall back to the old regex so odd Zamunda names still show something.
+    const t = (torrent.title || '').toUpperCase();
+    const legacy = [];
+    if (/HDR|DOVI|DOLBY.VISION/.test(t)) legacy.push('HDR');
+    if (/HEVC|X265|H\.?265/.test(t)) legacy.push('HEVC');
+    if (/REMUX/.test(t)) legacy.push('REMUX');
+    if (/TRUEHD|ATMOS/.test(t)) legacy.push('Atmos');
+    if (/DTS/.test(t)) legacy.push('DTS');
+    if (/7\.1/.test(t)) legacy.push('7.1');
+    else if (/5\.1/.test(t)) legacy.push('5.1');
+    return legacy;
 }
 
 function matchesEpisode(title, season, episode) {
@@ -688,8 +850,22 @@ async function tbResolve(magnet, infohash, tbToken, season, episode) {
 // =====================================================
 // FILTERS
 // =====================================================
+// Top-level categories that are never a film or a series. A DENYLIST on purpose: a new
+// film subcategory (Филми/4K, Сериали/SD…) then needs no code change, and a renamed or
+// missing `category` keeps its rows instead of silently emptying every result list.
+// Verified against the live vocabulary on 2026-09-18.
+const NON_VIDEO_CATEGORIES = ['игри', 'музика', 'програми', 'книги', 'андроид', 'спорт', 'клипове'];
+
+function isVideoCategory(torrent) {
+    const group = (torrent.category || '').split('/')[0].trim().toLowerCase();
+    if (!group) return true;               // unknown → keep, never drop on a missing field
+    return !NON_VIDEO_CATEGORIES.includes(group);
+}
+
 function applyFilters(torrents, config, type) {
-    let filtered = torrents;
+    // Films and series only — a `q=dune` search otherwise returns Dune Imperium (Игри/Linux)
+    // and offers a game as a stream.
+    let filtered = torrents.filter(isVideoCategory);
 
     // Content filter
     if (config.content === 'bgaudio') {
@@ -702,8 +878,8 @@ function applyFilters(torrents, config, type) {
     const qualities = config.quality.split(',').map(q => q.trim().toLowerCase());
     const allQualities = qualities.length >= 4 || config.quality === DEFAULTS.quality;
     filtered.forEach(t => {
-        t._quality = detectQuality(t.title, t.size);
-        t._extras = detectExtras(t.title);
+        t._quality = detectQuality(t);
+        t._extras = detectExtras(t);
     });
     if (!allQualities) {
         filtered = filtered.filter(t => qualities.includes(t._quality.key) || t._quality.key === 'unknown');
@@ -721,18 +897,61 @@ function applyFilters(torrents, config, type) {
     return filtered;
 }
 
+// How good the PRINT is, once resolution is equal. A remux is the best print there is —
+// the old code pushed it to the bottom and then preferred the smallest file, which is why
+// the top row was so often the worst copy on offer.
+const SOURCE_RANK = {
+    'bluray': 90, 'blu-ray': 90, 'uhdbluray': 95, 'web-dl': 80, 'webdl': 80,
+    'bdrip': 70, 'brrip': 65, 'webrip': 60, 'hdtv': 40, 'dvdrip': 30, 'dvd': 30,
+    'hdrip': 45, 'telesync': 0, 'ts': 0, 'cam': 0, 'screener': 5,
+};
+const AUDIO_RANK = [
+    [/ATMOS/i, 60], [/TRUEHD/i, 55], [/DTS[-\s]?(HD|X)/i, 50], [/DTS/i, 40],
+    [/EAC3|DDP|DD\+/i, 30], [/AC3|\bDD\b/i, 20], [/FLAC/i, 35], [/AAC/i, 15],
+];
+
+function qualityScore(torrent) {
+    const p = analyse(torrent);
+    const q = torrent._quality || detectQuality(torrent);
+    let s = q.score * 1000;                       // resolution dominates everything else
+
+    const hdr = hdrTag(p);
+    if (hdr === 'DV') s += 220;
+    else if (hdr === 'HDR10+') s += 180;
+    else if (hdr) s += 140;
+
+    if (p.isRemux) s += 260;
+    else {
+        const src = (p.source || '').toLowerCase().replace(/[\s_]/g, '');
+        s += (SOURCE_RANK[src] !== undefined ? SOURCE_RANK[src] : 50) * 1.6;
+    }
+
+    for (const [re, pts] of AUDIO_RANK) {
+        if ((p.audio || []).some(a => re.test(a))) { s += pts; break; }
+    }
+    const ch = parseFloat((p.channels || [])[0] || '0') || 0;
+    s += Math.min(ch, 8) * 6;                     // 7.1 ahead of 5.1 ahead of 2.0
+
+    if (p.bitDepth === '10-bit') s += 25;
+    if (/265|HEVC/i.test(p.codec || '')) s += 20; // more bitrate for the same bytes
+    if (p.isProper || p.isRepack) s += 30;
+    if (p.isUpscaled) s -= 400;                   // fake 4K belongs below real 1080p
+    if (p.is3D) s -= 200;
+    if (isBgAudio(torrent)) s += 150;             // this is a Bulgarian addon
+
+    return s;
+}
+
 function sortTorrents(torrents, config) {
     const sortBy = config.sort || 'quality';
+    if (sortBy === 'size') {
+        return torrents.sort((a, b) => parseSize(b.size) - parseSize(a.size));
+    }
+    // Score once, not once per comparison.
+    torrents.forEach(t => { t._score = qualityScore(t); });
     return torrents.sort((a, b) => {
-        if (sortBy === 'size') {
-            return parseSize(b.size) - parseSize(a.size);
-        }
-        // Default: quality, then smaller size within same quality
-        if (b._quality.score !== a._quality.score) return b._quality.score - a._quality.score;
-        const aRemux = /REMUX/i.test(a.title);
-        const bRemux = /REMUX/i.test(b.title);
-        if (aRemux !== bRemux) return aRemux ? 1 : -1;
-        return parseSize(a.size) - parseSize(b.size);
+        if (b._score !== a._score) return b._score - a._score;
+        return parseSize(b.size) - parseSize(a.size);   // equal print: more bitrate wins
     });
 }
 
@@ -1105,17 +1324,40 @@ function buildStream(torrent, url, mode) {
     const bg = isBgAudio(torrent);
     const sizeStr = torrent.size || '?';
 
-    // NAME field (left side in Stremio)
-    const qualityLine = extras.length > 0 ? `${q.tag} ${extras.join(' ')}` : q.tag;
+    // NAME field (left side in Stremio) — resolution + HDR flavour only, so it stays
+    // readable on a TV. The rest moves to the format line below.
+    const p = analyse(torrent);
+    const hdr = hdrTag(p);
+    const qualityLine = hdr ? `${q.tag} ${hdr}` : q.tag;
     const namePrefix = mode === 'rd' ? '⚡ RD' : mode === 'tb' ? '⚡ TB' : '🔗 P2P';
 
-    // TITLE field (right side in Stremio)
+    // TITLE field (right side in Stremio): filename / video+audio format / size+source
+    const videoBits = [];
+    if (p.codec) videoBits.push(p.codec);
+    if (p.bitDepth === '10-bit') videoBits.push('10bit');
+    if (p.isRemux) videoBits.push('REMUX');
+    else if (p.source) videoBits.push(p.source);
+
+    const audioBits = [];
+    if ((p.audio || []).length) audioBits.push(p.audio.join(' '));
+    if ((p.channels || [])[0]) audioBits.push(p.channels[0]);
+
+    const fmtParts = [];
+    if (videoBits.length) fmtParts.push(`🎬 ${videoBits.join(' ')}`);
+    if (audioBits.length) fmtParts.push(`🔊 ${audioBits.join(' ')}`);
+    // Nothing parsed out of the name — fall back to the old badge list rather than a blank row.
+    if (!fmtParts.length && extras.length) fmtParts.push(`🎬 ${extras.join(' ')}`);
+    const formatLine = fmtParts.join('  ');
+
     const bgFlag = bg ? ' 🇧🇬' : '';
     const infoLine = `💾 ${sizeStr} ⚙️ ${src}${bgFlag}`;
+    const titleLines = [torrent.title.substring(0, 100)];
+    if (formatLine) titleLines.push(formatLine);
+    titleLines.push(infoLine);
 
     const stream = {
         name: `${namePrefix}\nZamunda ${qualityLine}`,
-        title: `${torrent.title.substring(0, 100)}\n${infoLine}`,
+        title: titleLines.join('\n'),
         behaviorHints: {
             bingeGroup: `zamunda-${q.key}`,
             notWebReady: true
@@ -1358,7 +1600,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.1.6</span>
+<span style="font-size:12px;color:var(--dim)">v2.3.0</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1398,7 +1640,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.1.6' }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.3.0', index: idxStats(), providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1414,6 +1656,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.1.6 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.3.0 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });

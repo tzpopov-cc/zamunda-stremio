@@ -1,7 +1,7 @@
 {
   "name": "zamunda-bg-stremio",
   "version": "1.0.0",
-  "description": "Stremio addon for Bulgarian audio movies and series from Zamunda.RIP archive",
+  "description": "Stremio addon for Bulgarian audio movies and series from the Zamunda archive",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
@@ -21,6 +21,7 @@
     "axios": "^1.7.0",
     "bencode": "^4.0.0",
     "cors": "^2.8.5",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "parsium-media": "^1.1.0"
   }
 }

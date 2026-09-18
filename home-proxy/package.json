@@ -1,0 +1,10 @@
+{
+  "name": "zamunda-egress-proxy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Drop-in replacement for the api-proxy Cloudflare Worker, deployable to any host, with an egress probe",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18.0.0" },
+  "dependencies": { "express": "^4.19.2" }
+}
