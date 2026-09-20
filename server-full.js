@@ -3,6 +3,7 @@ const axios = require('axios');
 const cors = require('cors');
 const crypto = require('crypto');
 const { parse: parseMedia } = require('parsium-media');
+const dgram = require('dgram');
 const fs = require('fs');
 const path = require('path');
 
@@ -227,7 +228,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.3.0',
+        version: '2.4.0',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -279,6 +280,93 @@ const UPSTREAM_WINDOW = 15 * 60 * 1000;
 const UPSTREAM_MIN_SAMPLE = 5;              // below this, say nothing rather than guess
 const UPSTREAM_RECENT = 20;                 // judge on the last N attempts so recovery clears fast
 const UPSTREAM_DOWN_RATIO = 0.5;            // most searches failing = down, as users experience it
+
+// =====================================================
+// SEEDER COUNTS — UDP tracker scrape (BEP 15)
+// =====================================================
+// The .life API returns no swarm data whatsoever (8 fields, none of them seeders), and the
+// magnets carry exactly one tracker, so scraping it is the only place a count can come from.
+// Failure is ALWAYS silent: a tracker that is slow, rate-limiting or down must never cost a
+// user their stream list. No count simply means no count is shown.
+const TRACKER = { host: 'tracker.opentrackr.org', port: 1337 };
+const SCRAPE_TIMEOUT_MS = 3000;
+const SCRAPE_TTL = 10 * 60 * 1000;
+const SCRAPE_MAX = 70;                    // 74 hashes is the practical single-packet limit
+const seedCache = new Map();              // infohash -> { t, seeders, leechers }
+
+function scrapeSeeders(hashes) {
+    return new Promise(resolve => {
+        const now = Date.now();
+        const fresh = new Map();
+        const need = [];
+        for (const h of hashes) {
+            const c = seedCache.get(h);
+            if (c && now - c.t < SCRAPE_TTL) fresh.set(h, c);
+            else need.push(h);
+        }
+        const batch = need.slice(0, SCRAPE_MAX);
+        if (!batch.length) return resolve(fresh);
+
+        let settled = false;
+        const sock = dgram.createSocket('udp4');
+        const txn = crypto.randomBytes(4);
+        const finish = () => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            try { sock.close(); } catch (e) { /* already closed */ }
+            resolve(fresh);
+        };
+        const timer = setTimeout(finish, SCRAPE_TIMEOUT_MS);
+        sock.on('error', finish);
+
+        sock.on('message', msg => {
+            if (msg.length < 8 || !msg.subarray(4, 8).equals(txn)) return;
+            const action = msg.readUInt32BE(0);
+            if (action === 0 && msg.length >= 16) {
+                // connect reply -> issue the scrape
+                const req = Buffer.alloc(16 + 20 * batch.length);
+                msg.copy(req, 0, 8, 16);                  // connection id
+                req.writeUInt32BE(2, 8);                  // action = scrape
+                txn.copy(req, 12);
+                batch.forEach((h, i) => Buffer.from(h, 'hex').copy(req, 16 + 20 * i));
+                sock.send(req, TRACKER.port, TRACKER.host, err => { if (err) finish(); });
+            } else if (action === 2) {
+                // scrape reply: seeders / completed / leechers, 12 bytes per hash
+                for (let i = 0; i < batch.length; i++) {
+                    const off = 8 + 12 * i;
+                    if (off + 12 > msg.length) break;
+                    const rec = { t: Date.now(), seeders: msg.readUInt32BE(off), leechers: msg.readUInt32BE(off + 8) };
+                    if (seedCache.size > 5000) seedCache.clear();
+                    seedCache.set(batch[i], rec);
+                    fresh.set(batch[i], rec);
+                }
+                finish();
+            }
+        });
+
+        const conn = Buffer.alloc(16);
+        conn.writeUInt32BE(0x417, 0);        // protocol id 0x41727101980, high word
+        conn.writeUInt32BE(0x27101980, 4);   // ... low word
+        conn.writeUInt32BE(0, 8);            // action = connect
+        txn.copy(conn, 12);
+        sock.send(conn, TRACKER.port, TRACKER.host, err => { if (err) finish(); });
+    });
+}
+
+async function attachSeeders(torrents) {
+    try {
+        const hashes = [...new Set(torrents.map(t => t._infohash).filter(Boolean))];
+        if (!hashes.length) return;
+        const res = await scrapeSeeders(hashes);
+        torrents.forEach(t => {
+            const r = res.get(t._infohash);
+            if (r) { t._seeders = r.seeders; t._leechers = r.leechers; }
+        });
+    } catch (e) {
+        console.error('seeder scrape failed:', e.message);   // display-only, never fatal
+    }
+}
 
 // =====================================================
 // PERSISTENT TORRENT INDEX
@@ -1198,6 +1286,11 @@ async function resolveStreams(type, fullId, config) {
     // Sort
     filtered = sortTorrents(filtered, config);
 
+    // Swarm size for the rows we are about to show. One UDP round trip for the whole list,
+    // capped by SCRAPE_TIMEOUT_MS, cached for 10 minutes — and skipped entirely when nothing
+    // will be streamed peer-to-peer.
+    if (config.debrid === 'none' || config.debridmode === 'all') await attachSeeders(filtered);
+
     // Resolve correct fileIdx for pack torrents (season packs / complete series)
     if (season && episode) {
         const packs = filtered.filter(t => t._matchType === 'season' || t._matchType === 'fallback');
@@ -1350,7 +1443,10 @@ function buildStream(torrent, url, mode) {
     const formatLine = fmtParts.join('  ');
 
     const bgFlag = bg ? ' 🇧🇬' : '';
-    const infoLine = `💾 ${sizeStr} ⚙️ ${src}${bgFlag}`;
+    // Seeders only matter for a peer-to-peer row — a debrid link is served from their cache.
+    const seedTag = (mode === 'p2p' && typeof torrent._seeders === 'number')
+        ? ` 👥 ${torrent._seeders}` : '';
+    const infoLine = `💾 ${sizeStr} ⚙️ ${src}${bgFlag}${seedTag}`;
     const titleLines = [torrent.title.substring(0, 100)];
     if (formatLine) titleLines.push(formatLine);
     titleLines.push(infoLine);
@@ -1600,7 +1696,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.3.0</span>
+<span style="font-size:12px;color:var(--dim)">v2.4.0</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1640,7 +1736,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.3.0', index: idxStats(), providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.4.0', index: idxStats(), providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1656,6 +1752,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.3.0 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.4.0 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
