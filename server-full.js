@@ -228,7 +228,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.5.0',
+        version: '2.5.1',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -470,7 +470,21 @@ function sourceStatus() {
     return (failed / ev.length) >= UPSTREAM_DOWN_RATIO ? 'down' : 'ok';
 }
 
-async function searchZamunda(query) {
+// zamunda.life answers HTTP 500 for any query containing : ? , . ! or % — verified
+// 2026-09-20 against the live API. Cinemeta hands us titles with exactly those characters
+// ("Daredevil: Born Again", "Mr. Robot"), so every such title failed with the outage notice
+// even though the archive had the episodes. Punctuation carries no matching value here —
+// release names are built from dots and spaces — so rather than guess at the server's
+// decoder, keep letters, digits and the punctuation that tested safe, and space out the rest.
+const QUERY_UNSAFE = /[^\p{L}\p{N}\s&'()+#\/-]+/gu;
+
+function sanitizeQuery(q) {
+    return String(q || '').replace(QUERY_UNSAFE, ' ').replace(/\s+/g, ' ').trim();
+}
+
+async function searchZamunda(rawQuery) {
+    const query = sanitizeQuery(rawQuery);
+    if (!query) return [];
     const key = `search:${query.toLowerCase()}`;
     const cached = getCached(key);
     if (cached) return cached;
@@ -640,6 +654,10 @@ function matchesEpisode(title, season, episode) {
         /(\d+)\s*[-–_~]+\s*(\d+)\s*[\[\(]/,                             // "101-114 [720p]"
         /(\d+)\s*[-–_~]+\s*(\d+)\s*$/,                                  // "1-293" at end
         /[_\s.-]+(\d+)\s*[_\s]*[-–~]+\s*[_\s]*(\d+)(?:\s*[\[\(]|\s*$|[_\s]+)/,  // "1_-_293", "01 ~ 100"
+        // A range wrapped in its own brackets: "(01-24)", "[01-24]". The patterns above all
+        // need the range preceded by _ . - or space, or followed directly by [ or ( — the
+        // enclosing brackets defeat both, which is how a 24-episode batch matched nothing.
+        /[\[\(](\d+)\s*[-–_~]+\s*(\d+)[\]\)]/,
     ];
     for (const p of rangePatterns) {
         const m = t.match(p);
@@ -1704,7 +1722,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.5.0</span>
+<span style="font-size:12px;color:var(--dim)">v2.5.1</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1744,7 +1762,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.5.0', index: idxStats(), providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.5.1', index: idxStats(), providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1760,6 +1778,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.5.0 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.5.1 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });

@@ -208,6 +208,17 @@ Full procedure is in `CLAUDE.md` (local, gitignored). The parts that bite:
   `sudo dnf -y module reset nodejs && sudo dnf -y module enable nodejs:20 && sudo dnf -y install nodejs`
 - **`.life` blocks by IP reputation, not headers.** Bare curl, a browser UA and a full browser header
   set all get the same `cf-mitigated: challenge` 403 from a flagged host. Don't debug headers.
+- **`.life` returns HTTP 500 for a query containing `:` `?` `,` `.` `!` or `%`** (verified 2026-09-20).
+  Cinemeta supplies titles with exactly those characters, so every colon or full-stop title —
+  "Daredevil: Born Again", "Mr. Robot", "Star Wars: The Mandalorian and Grogu" — failed with the
+  outage notice while the archive had the episodes. `sanitizeQuery()` now spaces out anything outside
+  letters, digits and the punctuation that tested safe (`& ' ( ) + # / -`). **Symptom to recognise:
+  `[DOWN] … source unavailable` for some titles while others work fine in the same minute.** A real
+  outage takes everything down at once; a per-title pattern means the query, not the source.
+- **An episode range in its own brackets — `(01-24)`, `[01-24]` — needs its own pattern.** Every other
+  range pattern requires the range preceded by `_ . -` or a space, or followed directly by `[` or `(`;
+  the enclosing brackets defeat both, so a 24-episode batch matched nothing. Symptom:
+  `[MISS] … N torrents but 0 episode matches` with a `[Batch]` release in the sample.
 - **A 200 is not data.** During the August outage, `zelka.org` and `arenabg.com` returned HTTP 200
   serving a seizure page. Read the body.
 - **Cache-bust before declaring a source alive.** `?q=Dune` served from Cloudflare's edge cache looked
