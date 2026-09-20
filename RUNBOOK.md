@@ -62,7 +62,14 @@ sudo journalctl -u zamunda-proxy -n 50 --no-pager
 sudo systemctl restart zamunda-proxy
 ```
 
-Layout: app `/opt/zamunda-proxy` · env `/etc/zamunda-proxy.env` (root:opc 0640) · unit `/etc/systemd/system/zamunda-proxy.service` · user `opc` · port 7011.
+Layout: app `/opt/zamunda-proxy` (root-owned) · env `/etc/zamunda-proxy.env` (root:zproxy 0640) ·
+unit `/etc/systemd/system/zamunda-proxy.service` · runs as **`zproxy`** (system account, no shell, no
+home, no sudo) · port 7011. A pre-hardening copy of the unit is at `/root/zamunda-proxy.service.bak`.
+
+The unit is sandboxed (`ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, empty
+`CapabilityBoundingSet`, `SystemCallFilter=@system-service`, …). If you add a feature that needs to
+write to disk, it will fail until you add a `ReadWritePaths=` line — that is the sandbox doing its job,
+not a bug. **Never add `MemoryDenyWriteExecute`** — it breaks the V8 JIT and Node will not start.
 
 ### Addon container (Hetzner)
 
@@ -76,8 +83,20 @@ docker compose up -d --build     # rebuild; a restart is NOT enough after a file
 
 ### Oracle IP changed
 
-**The public IP is EPHEMERAL.** Stop/start the instance and it changes, and the addon silently breaks
-for everyone. Symptom: step A returns `000` and the Oracle console shows a different public IP.
+**The public IP is EPHEMERAL and cannot be made reserved on this tenancy.** Stop/start the instance
+and it changes, and the addon silently breaks for everyone. Symptom: step A returns `000` and the
+Oracle console shows a different public IP.
+
+Converting to a reserved IP was attempted on 2026-09-20 and does not work here:
+- Once an ephemeral IP is attached, the VNIC's Edit dialog offers only *No public IP* / *Ephemeral* —
+  the *Reserved* option disappears. Oracle does not convert in place.
+- The `⋮ → Reserve IPv4 address` menu item is a **trap**: it reserves the *private* IP (10.0.0.12), a
+  different feature entirely. Read the dialog title before confirming.
+- Assigning a secondary private IP with a reserved public IP fails with
+  `API Error — Authorization failed or requested resource not found`, on a free tenancy.
+
+So treat "the IP changed" as a known failure mode with a one-line fix, below. **Do not stop the
+instance** unless you are ready to re-point the addon afterwards.
 
 ```bash
 # read the new IP from the console, then:
@@ -98,6 +117,22 @@ ZAMUNDA_PROVIDERS=http://newhost:7011,http://150.230.21.90:7011
 
 To find a host that works at all, deploy `home-proxy/` there and read `/probe`. Known results:
 **Oracle Cloud (Amsterdam) 200** · Render (Frankfurt) 403 · Hetzner 403 · Cloudflare Workers 403.
+
+## Security posture (Oracle box)
+
+- **Port 7011 is not open to the internet.** Two independent layers each allow only
+  `178.104.89.141/32` (the Hetzner box): the cloud NSG ingress rule, and `firewalld`.
+- Requests still need the `X-Api-Key` header; the proxy refuses to start without a key set, rather than
+  running open.
+- Service runs as `zproxy` — system account, no shell, no home, not in any sudo group.
+- SSH: `passwordauthentication no`, `kbdinteractiveauthentication no`, keys only.
+- Automatic **security** updates via `dnf-automatic.timer` (`upgrade_type = security`, `apply_updates = yes`).
+- Only ports 22 and 7011 listen at all.
+
+**Known gap:** the Hetzner → Oracle hop is plain HTTP over the public internet, so the API key travels
+in cleartext. Acceptable given the key only authorises torrent *searches* and the path is pinned to one
+source IP — but the clean fix is a DNS name on the Oracle box plus Caddy for automatic HTTPS (restrict
+443 to the Hetzner IP in the NSG). That needs a DNS record, so it is a deliberate to-do, not an oversight.
 
 ## Deploying a new version
 
