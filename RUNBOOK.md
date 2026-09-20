@@ -8,7 +8,7 @@ What to do when the addon is down. Written 2026-09-20, after the `.rip` → `.li
 Stremio client
   └─> https://zamunda-stremio.tzkppv.com        Hetzner 178.104.89.141, Docker + Caddy
         ├─ data/torrent-index.jsonl             local index — answers without the network
-        └─> http://150.230.21.90:7011           Oracle Amsterdam, systemd (the egress proxy)
+        └─> http://zproxy.tzkppv.com:7011      -> 150.230.21.90, Oracle Amsterdam, systemd
               └─> https://zamunda.life/api/torrents
 ```
 
@@ -35,12 +35,12 @@ curl -s "https://zamunda-stremio.tzkppv.com/lang=bg/stream/movie/tt0133093.json"
 
 ```bash
 # A. can Hetzner reach the Oracle proxy?
-ssh root@178.104.89.141 'curl -sS -o /dev/null -w "%{http_code}\n" --max-time 15 http://150.230.21.90:7011/health'
+ssh root@178.104.89.141 'curl -sS -o /dev/null -w "%{http_code}\n" --max-time 15 http://zproxy.tzkppv.com:7011/health'
 #   200   -> proxy fine, problem is the addon. Go to "Addon container".
 #   000   -> blocked or proxy down. Go to "Egress proxy".
 
 # B. can the proxy reach zamunda.life? (unauthenticated, safe)
-curl -s http://150.230.21.90:7011/probe     # only from an allowed source IP
+curl -s http://zproxy.tzkppv.com:7011/probe   # only from an allowed source IP
 #   {"usable":true,...}   -> .life is fine
 #   {"usable":false,"status":403,...} -> .life is challenging this host. Go to "Oracle IP changed".
 
@@ -83,9 +83,18 @@ docker compose up -d --build     # rebuild; a restart is NOT enough after a file
 
 ### Oracle IP changed
 
-**The public IP is EPHEMERAL and cannot be made reserved on this tenancy.** Stop/start the instance
-and it changes, and the addon silently breaks for everyone. Symptom: step A returns `000` and the
-Oracle console shows a different public IP.
+The addon points at **`zproxy.tzkppv.com`**, not at a bare IP, so an IP change is a **one-record DNS
+edit** and needs no deploy, no restart and no code change:
+
+> Cloudflare → tzkppv.com → DNS → Records → `zproxy` → Edit → new IPv4 → Save.
+
+⚠️ **Keep it "DNS only" (grey cloud).** Proxied would break it twice over: Cloudflare does not proxy
+port 7011 at all, and it would replace the source IP arriving at Oracle, which the NSG rule pins to
+the Hetzner box.
+
+**Why a DNS name and not a reserved IP:** the public IP is EPHEMERAL and *cannot* be made reserved on
+this tenancy. Symptom if it ever changes: step A returns `000` and the Oracle console shows a
+different public IP.
 
 Converting to a reserved IP was attempted on 2026-09-20 and does not work here:
 - Once an ephemeral IP is attached, the VNIC's Edit dialog offers only *No public IP* / *Ephemeral* —
@@ -98,11 +107,14 @@ Converting to a reserved IP was attempted on 2026-09-20 and does not work here:
 So treat "the IP changed" as a known failure mode with a one-line fix, below. **Do not stop the
 instance** unless you are ready to re-point the addon afterwards.
 
+Only if you ever move off DNS, or want to point at a different host directly:
+
 ```bash
-# read the new IP from the console, then:
 ssh root@178.104.89.141 \
-  "cd /opt/personal/sites/zamunda-stremio && sed -i 's#^ZAMUNDA_PROVIDERS=.*#ZAMUNDA_PROVIDERS=http://<NEW_IP>:7011#' .env && docker compose up -d"
+  "cd /opt/personal/sites/zamunda-stremio && sed -i 's#^ZAMUNDA_PROVIDERS=.*#ZAMUNDA_PROVIDERS=http://<NEW_HOST>:7011#' .env && docker compose up -d --force-recreate"
 ```
+
+An `env_file` change needs `--force-recreate`; a plain restart keeps the old environment.
 
 Also update the NSG ingress rule if the **Hetzner** IP ever changes (it is pinned to `178.104.89.141/32`).
 
@@ -131,8 +143,9 @@ To find a host that works at all, deploy `home-proxy/` there and read `/probe`. 
 
 **Known gap:** the Hetzner → Oracle hop is plain HTTP over the public internet, so the API key travels
 in cleartext. Acceptable given the key only authorises torrent *searches* and the path is pinned to one
-source IP — but the clean fix is a DNS name on the Oracle box plus Caddy for automatic HTTPS (restrict
-443 to the Hetzner IP in the NSG). That needs a DNS record, so it is a deliberate to-do, not an oversight.
+source IP. The DNS name now exists (`zproxy.tzkppv.com`), so the remaining step is Caddy on the Oracle
+box for automatic HTTPS — ideally via a DNS-01 challenge with a scoped Cloudflare token, so no extra
+port is ever opened to the internet.
 
 ## Deploying a new version
 
