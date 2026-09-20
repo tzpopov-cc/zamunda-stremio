@@ -8,7 +8,9 @@ What to do when the addon is down. Written 2026-09-20, after the `.rip` → `.li
 Stremio client
   └─> https://zamunda-stremio.tzkppv.com        Hetzner 178.104.89.141, Docker + Caddy
         ├─ data/torrent-index.jsonl             local index — answers without the network
-        └─> http://zproxy.tzkppv.com:7011      -> 150.230.21.90, Oracle Amsterdam, systemd
+        ├─> http://10.8.0.1:7011               WireGuard tunnel (encrypted) — PRIMARY
+        └─> http://zproxy.tzkppv.com:7011      public path, IP-pinned — AUTOMATIC FALLBACK
+              (both reach the same proxy on Oracle Amsterdam, 150.230.21.90)
               └─> https://zamunda.life/api/torrents
 ```
 
@@ -34,8 +36,13 @@ curl -s "https://zamunda-stremio.tzkppv.com/lang=bg/stream/movie/tt0133093.json"
 ## Diagnose down the chain
 
 ```bash
-# A. can Hetzner reach the Oracle proxy?
-ssh root@178.104.89.141 'curl -sS -o /dev/null -w "%{http_code}\n" --max-time 15 http://zproxy.tzkppv.com:7011/health'
+# A. can Hetzner reach the Oracle proxy? (tunnel first, then the public fallback)
+ssh root@178.104.89.141 'wg show wg0 | grep -E "latest handshake|transfer"'
+ssh root@178.104.89.141 'curl -sS -o /dev/null -w "wg:     %{http_code}\n" --max-time 12 http://10.8.0.1:7011/health'
+ssh root@178.104.89.141 'curl -sS -o /dev/null -w "public: %{http_code}\n" --max-time 15 http://zproxy.tzkppv.com:7011/health'
+#   wg 200            -> everything normal
+#   wg 000/public 200 -> tunnel is down, the addon is silently using the fallback. Fix the tunnel.
+#   both 000          -> proxy itself is down. Go to "Egress proxy".
 #   200   -> proxy fine, problem is the addon. Go to "Addon container".
 #   000   -> blocked or proxy down. Go to "Egress proxy".
 
@@ -130,10 +137,42 @@ ZAMUNDA_PROVIDERS=http://newhost:7011,http://150.230.21.90:7011
 To find a host that works at all, deploy `home-proxy/` there and read `/probe`. Known results:
 **Oracle Cloud (Amsterdam) 200** · Render (Frankfurt) 403 · Hetzner 403 · Cloudflare Workers 403.
 
+### WireGuard tunnel
+
+Hetzner `10.8.0.2` <-> Oracle `10.8.0.1`, Oracle listening on UDP 51820, endpoint set by DNS name so
+an IP change does not break it. Keys in `/etc/wireguard/` on each box; **private keys never left their
+host** and the public keys are in each other's `wg0.conf`.
+
+```bash
+ssh root@178.104.89.141 'systemctl restart wg-quick@wg0; sleep 3; wg show wg0'
+ssh -i ~/Downloads/ssh-key-2026-09-20.key opc@150.230.21.90 'sudo systemctl restart wg-quick@wg0; sudo wg show wg0'
+```
+
+`latest handshake` should be under ~2 minutes old. `transfer: 0 B received` with a non-zero sent count
+means packets are leaving Hetzner and nothing is coming back — almost always the Oracle NSG missing its
+**UDP 51820** ingress rule from `178.104.89.141/32` (firewalld needs the same rule, separately).
+
+**The tunnel is not a single point of failure.** `ZAMUNDA_PROVIDERS` lists the tunnel first and the
+public path second, so if WireGuard drops the addon falls back automatically on the next search. That
+is why the public TCP 7011 rule is deliberately kept — it is the break-glass path, not an oversight.
+
+### Seeder counts (v2.4.0)
+
+`.life` returns no swarm data, so counts come from a UDP tracker scrape (BEP 15) against
+`tracker.opentrackr.org:1337` — the single tracker embedded in the magnets. One connect + one scrape,
+whole list in one packet (70 hashes max), 3s timeout, cached 10 minutes, shown as `👥 N` on P2P rows only.
+
+**Failure is silent by design.** If the tracker is slow, rate-limiting or down, rows simply carry no
+count — it must never cost a user their stream list. So "the seeders disappeared" is a tracker problem,
+not an addon bug. Counts reflect only peers that announced to *that* tracker; DHT-only peers are invisible,
+so a low number is a floor, not a ceiling.
+
 ## Security posture (Oracle box)
 
-- **Port 7011 is not open to the internet.** Two independent layers each allow only
-  `178.104.89.141/32` (the Hetzner box): the cloud NSG ingress rule, and `firewalld`.
+- **Traffic is encrypted.** The addon talks to the proxy over WireGuard; the plaintext public path
+  remains only as an automatic fallback.
+- **Nothing is open to the internet.** Both TCP 7011 and UDP 51820 are allowed only from
+  `178.104.89.141/32`, enforced twice over: the cloud NSG, and `firewalld`.
 - Requests still need the `X-Api-Key` header; the proxy refuses to start without a key set, rather than
   running open.
 - Service runs as `zproxy` — system account, no shell, no home, not in any sudo group.
@@ -141,11 +180,9 @@ To find a host that works at all, deploy `home-proxy/` there and read `/probe`. 
 - Automatic **security** updates via `dnf-automatic.timer` (`upgrade_type = security`, `apply_updates = yes`).
 - Only ports 22 and 7011 listen at all.
 
-**Known gap:** the Hetzner → Oracle hop is plain HTTP over the public internet, so the API key travels
-in cleartext. Acceptable given the key only authorises torrent *searches* and the path is pinned to one
-source IP. The DNS name now exists (`zproxy.tzkppv.com`), so the remaining step is Caddy on the Oracle
-box for automatic HTTPS — ideally via a DNS-01 challenge with a scoped Cloudflare token, so no extra
-port is ever opened to the internet.
+**Closed 2026-09-20:** the hop used to be plain HTTP with the API key in cleartext. It now runs over
+WireGuard. The fallback path is still plaintext, but it is only used when the tunnel is down, and it
+remains pinned to one source IP and key-protected.
 
 ## Deploying a new version
 
