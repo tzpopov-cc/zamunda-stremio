@@ -219,6 +219,18 @@ Full procedure is in `CLAUDE.md` (local, gitignored). The parts that bite:
   range pattern requires the range preceded by `_ . -` or a space, or followed directly by `[` or `(`;
   the enclosing brackets defeat both, so a 24-episode batch matched nothing. Symptom:
   `[MISS] … N torrents but 0 episode matches` with a `[Batch]` release in the sample.
+- **Series results must be checked against the show name — substring matching is not enough.** Until
+  v2.5.2 series went straight into `matchesEpisode` with no title check, so "Silo" S3E8 was offered
+  "Hju Haui - Siloz - 3. Prah" (a Hugh Howey audiobook) and "Silovata redakcia na prehoda". Whole-word
+  matching is the fix; articles are dropped because releases omit them, and the name need not be a
+  prefix because releases bury it ("Special.Ops.Lioness.S01E01"). If this ever over-filters you will
+  see `[MISS] … N results, none carry the show name` — that log line exists to make it diagnosable.
+- **Most "misses" are the frozen archive, not a bug.** Verified 2026-09-21 against the live API:
+  Fauda holds S1-S4 (S5 requested), Special Ops Lioness S1, Silo S1-S2 (S3 requested), and Neagley and
+  Agent Kim Reactivated return **0 rows**. Nothing after roughly 2026-08-25 exists in the source and
+  nothing ever will. `[MISS] … 0 episode matches (available: S01,S02,…)` is the addon correctly
+  reporting the season is absent. **Before debugging a miss, check whether the archive has that season
+  at all** — the "available:" list in the log already tells you.
 - **A 200 is not data.** During the August outage, `zelka.org` and `arenabg.com` returned HTTP 200
   serving a seizure page. Read the body.
 - **Cache-bust before declaring a source alive.** `?q=Dune` served from Cloudflare's edge cache looked

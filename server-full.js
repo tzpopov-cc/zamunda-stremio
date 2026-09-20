@@ -228,7 +228,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.5.1',
+        version: '2.5.2',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -1108,6 +1108,27 @@ function torrentTitlePrefix(title) {
     return out.join(' ').trim();
 }
 
+// Series carried NO title verification at all: search results went straight into
+// matchesEpisode, so anything the query happened to return was a candidate. That is how
+// "Silo" S3E8 was offered "Hju Haui - Siloz - 3. Prah" (a Hugh Howey audiobook) and
+// "Silovata redakcia na prehoda" (a documentary).
+//
+// Every meaningful word of the show name must appear as a WHOLE WORD. Whole-word matching is
+// the entire point — substring matching is precisely what let "silo" match "silovata". The
+// name need not be a prefix, because real releases bury it ("Special.Ops.Lioness.S01E01"),
+// and articles are dropped because releases freely omit them ("Mandalorian.S03E01").
+const TITLE_STOPWORDS = new Set(['the', 'a', 'an']);
+
+function nameTokens(name) {
+    return normalizeTitle(name).split(' ').filter(w => w && !TITLE_STOPWORDS.has(w));
+}
+
+function matchesSeriesTitle(title, name, bgName) {
+    const words = new Set(normalizeTitle(title).split(' ').filter(Boolean));
+    const allPresent = toks => toks.length > 0 && toks.every(t => words.has(t));
+    return allPresent(nameTokens(name)) || (!!bgName && allPresent(nameTokens(bgName)));
+}
+
 function matchesMovie(title, name, year, bgName) {
     const prefix = torrentTitlePrefix(title);
     const n = normalizeTitle(name);
@@ -1212,6 +1233,20 @@ async function resolveStreams(type, fullId, config) {
     // Episode matching for series
     if (type === 'series' && season && episode) {
         const beforeCount = allTorrents.length;
+
+        // Confirm the SHOW before looking for the episode. A wrong stream is worse than an
+        // honest miss, so if nothing carries the show name we stop here rather than offering
+        // whatever the search dragged in.
+        const onShow = allTorrents.filter(t => matchesSeriesTitle(t.title, meta.name, meta.bulgarian_name));
+        if (!onShow.length) {
+            logEvent('MISS', `${label} — ${beforeCount} results, none carry the show name [${allTorrents.slice(0, 3).map(t => t.title).join(' | ')}]`);
+            return [];
+        }
+        if (onShow.length < beforeCount) {
+            console.log(`  ${onShow.length}/${beforeCount} carry the show name`);
+        }
+        allTorrents = onShow;
+
         const matched = allTorrents.map(t => ({
             ...t, _matchType: matchesEpisode(t.title, season, episode)
         })).filter(t => t._matchType !== null);
@@ -1722,7 +1757,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.5.1</span>
+<span style="font-size:12px;color:var(--dim)">v2.5.2</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1762,7 +1797,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.5.1', index: idxStats(), providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.5.2', index: idxStats(), providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1778,6 +1813,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.5.1 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.5.2 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
