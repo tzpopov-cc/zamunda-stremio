@@ -228,7 +228,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.4.0',
+        version: '2.5.0',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -1027,6 +1027,14 @@ function qualityScore(torrent) {
     if (p.is3D) s -= 200;
     if (isBgAudio(torrent)) s += 150;             // this is a Bulgarian addon
 
+    // Swarm health. Only applied when we actually know it — an unscraped torrent is an
+    // unknown, not a dead one, and must never be punished for missing data.
+    if (typeof torrent._seeders === 'number') {
+        if (torrent._seeders === 0) s -= 2500;    // will not start; below a live lower-res copy
+        else if (torrent._seeders < 3) s -= 300;  // technically alive, realistically painful
+        else s += Math.min(torrent._seeders, 20) * 8;
+    }
+
     return s;
 }
 
@@ -1284,12 +1292,12 @@ async function resolveStreams(type, fullId, config) {
     }
 
     // Sort
-    filtered = sortTorrents(filtered, config);
-
-    // Swarm size for the rows we are about to show. One UDP round trip for the whole list,
-    // capped by SCRAPE_TIMEOUT_MS, cached for 10 minutes — and skipped entirely when nothing
-    // will be streamed peer-to-peer.
+    // Swarm size BEFORE sorting, so a dead torrent cannot win the top row. One UDP round trip
+    // for the whole list, capped by SCRAPE_TIMEOUT_MS, cached 10 minutes, and skipped entirely
+    // when nothing will be streamed peer-to-peer (a debrid link is served from their cache).
     if (config.debrid === 'none' || config.debridmode === 'all') await attachSeeders(filtered);
+
+    filtered = sortTorrents(filtered, config);
 
     // Resolve correct fileIdx for pack torrents (season packs / complete series)
     if (season && episode) {
@@ -1696,7 +1704,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.4.0</span>
+<span style="font-size:12px;color:var(--dim)">v2.5.0</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1736,7 +1744,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.4.0', index: idxStats(), providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.5.0', index: idxStats(), providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1752,6 +1760,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.4.0 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.5.0 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
