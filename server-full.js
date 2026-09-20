@@ -218,7 +218,10 @@ function parseConfig(configStr) {
 function configFingerprint(config) {
     const token = config.rdtoken || config.tbtoken || '';
     const tokenHash = token ? crypto.createHash('md5').update(token).digest('hex').substring(0, 8) : 'none';
-    return `${config.debrid}:${tokenHash}:${config.content}:${config.quality}:${config.sort}:${config.sources}:${config.sizelimit}`;
+    // `lang` MUST be in here: the stream cache keys on this fingerprint, and the notice and
+    // hint rows are language-dependent. Without it a Bulgarian response is served to an
+    // English config for the next hour (and vice versa).
+    return `${config.debrid}:${tokenHash}:${config.content}:${config.quality}:${config.sort}:${config.sources}:${config.sizelimit}:${config.lang || 'bg'}`;
 }
 
 // =====================================================
@@ -228,7 +231,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.5.2',
+        version: '2.5.4',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -1276,17 +1279,37 @@ async function resolveStreams(type, fullId, config) {
                     const em = u.match(/S\d+E(\d+)/g);
                     if (em) em.forEach(e => episodes.add(parseInt(e.match(/E(\d+)/)[1])));
                 });
+                // The reason belongs on screen, not only in the log. Returning nothing at all
+                // reads as "the addon is broken" when the truth is that the archive stops at an
+                // earlier season — and since the source is frozen, that answer is permanent.
+                const bgLang = (config.lang || 'bg') === 'bg';
                 let detail = '';
+                let missRow = null;
                 if (seasons.size > 0 && !seasons.has(season)) {
                     const avail = [...seasons].sort((a, b) => a - b).map(s => `S${String(s).padStart(2, '0')}`).join(',');
                     detail = ` (available: ${avail})`;
+                    missRow = {
+                        name: bgLang ? `ℹ️ Няма сезон ${season}\nZamunda BG` : `ℹ️ No season ${season}\nZamunda BG`,
+                        title: bgLang
+                            ? `Сезон ${season} го няма в архива.\nВ архива има: ${avail}`
+                            : `Season ${season} is not in the archive.\nThe archive has: ${avail}`,
+                        url: NOTICE_INFO_URL,
+                    };
                 } else if (episodes.size > 0 && !episodes.has(episode)) {
                     const maxEp = Math.max(...episodes);
-                    detail = ` (latest: E${String(maxEp).padStart(2, '0')})`;
+                    const latest = `E${String(maxEp).padStart(2, '0')}`;
+                    detail = ` (latest: ${latest})`;
+                    missRow = {
+                        name: bgLang ? `ℹ️ Няма епизод ${episode}\nZamunda BG` : `ℹ️ No episode ${episode}\nZamunda BG`,
+                        title: bgLang
+                            ? `Епизод ${episode} го няма в архива.\nПоследният в архива е ${latest}.`
+                            : `Episode ${episode} is not in the archive.\nThe latest one there is ${latest}.`,
+                        url: NOTICE_INFO_URL,
+                    };
                 }
                 const titles = allTorrents.slice(0, 3).map(t => t.title.substring(0, 80));
                 logEvent('MISS', `${label} — ${beforeCount} torrents but 0 episode matches${detail} [${titles.join(' | ')}]`);
-                return [];
+                return missRow ? [missRow] : [];
             }
         }
     }
@@ -1369,16 +1392,21 @@ async function resolveStreams(type, fullId, config) {
     const debridMode = config.debridmode || config.rdmode || 'guaranteed'; // backward compat
 
     // BG audio fallback hint — prepended to results when bgaudio filter found no BG tracks
+    const hintBg = (config.lang || 'bg') === 'bg';
     const bgHint = config._bgFallback ? [{
-        name: `⚠️ Няма БГ аудио\nZamunda BG`,
-        title: `Няма торенти с БГ аудио.\nПоказваме всички ${filtered.length} резултата.`,
+        name: hintBg ? `⚠️ Няма БГ аудио\nZamunda BG` : `⚠️ No BG audio\nZamunda BG`,
+        title: hintBg
+            ? `Няма торенти с БГ аудио.\nПоказваме всички ${filtered.length} резултата.`
+            : `Nothing with Bulgarian audio.\nShowing all ${filtered.length} results instead.`,
         url: NOTICE_INFO_URL
     }] : [];
 
     // Quality fallback hint — prepended to results when quality filter found no matching quality
     const qualHint = config._qualityFallback ? [{
-        name: `⚠️ Няма ${config.quality}\nZamunda BG`,
-        title: `Няма торенти в избраното качество.\nПоказваме всички ${filtered.length} резултата.`,
+        name: `⚠️ ${hintBg ? 'Няма' : 'No'} ${config.quality}\nZamunda BG`,
+        title: hintBg
+            ? `Няма торенти в избраното качество.\nПоказваме всички ${filtered.length} резултата.`
+            : `Nothing in the quality you chose.\nShowing all ${filtered.length} results instead.`,
         url: NOTICE_INFO_URL
     }] : [];
 
@@ -1757,7 +1785,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.5.2</span>
+<span style="font-size:12px;color:var(--dim)">v2.5.4</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1797,7 +1825,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.5.2', index: idxStats(), providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.5.4', index: idxStats(), providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1813,6 +1841,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.5.2 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.5.4 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });

@@ -231,6 +231,16 @@ Full procedure is in `CLAUDE.md` (local, gitignored). The parts that bite:
   nothing ever will. `[MISS] … 0 episode matches (available: S01,S02,…)` is the addon correctly
   reporting the season is absent. **Before debugging a miss, check whether the archive has that season
   at all** — the "available:" list in the log already tells you.
+- **`configFingerprint` keys the stream cache — anything language-dependent MUST be in it.** `lang`
+  was missing until v2.5.4, so a Bulgarian response was served to an English config for the next hour.
+  It went unnoticed for ages because the hint rows were hardcoded Bulgarian; the first properly
+  bilingual row exposed it immediately. Same trap for any future per-user output: if it changes the
+  response, it belongs in the fingerprint.
+- **A requested season that is absent now says so on screen.** The reason used to live only in the
+  log, so the viewer got an empty list, which reads as a broken addon. `[MISS] … (available: S01)` now
+  also returns an info row naming what the archive does hold. ⚠️ It is inferred from the rows that came
+  back, and the API caps at 50 per query — the per-season searches make this reliable in practice, but
+  a very heavily-released show could in principle report an incomplete "available" list.
 - **A 200 is not data.** During the August outage, `zelka.org` and `arenabg.com` returned HTTP 200
   serving a seizure page. Read the body.
 - **Cache-bust before declaring a source alive.** `?q=Dune` served from Cloudflare's edge cache looked
