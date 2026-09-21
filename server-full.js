@@ -112,7 +112,7 @@ function persist() {
 
 loadStore();
 setInterval(persist, 5000);                                    // debounced flush to disk
-['SIGTERM', 'SIGINT'].forEach(sig => process.on(sig, () => { persist(); process.exit(0); }));
+['SIGTERM', 'SIGINT'].forEach(sig => process.on(sig, () => { persist(); catFlush(); process.exit(0); }));
 
 function todayKey() { return new Date().toISOString().substring(0, 10); }
 
@@ -231,7 +231,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.5.5',
+        version: '2.6.0',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -455,6 +455,138 @@ function idxStats() {
 
 idxLoad();
 
+// =====================================================
+// INDEPENDENT MAGNET CATALOGUE
+// =====================================================
+// The index above is a cache of SEARCH RESULTS keyed by query string. It answers a repeat of
+// the same search without the network, but the same magnet is stored once per query that
+// found it (~2.2x duplication measured), and nothing can be enumerated or exported — a magnet
+// is only reachable by guessing the query that surfaced it.
+//
+// This is the normalised half: one record per unique infohash, with first/last seen and a hit
+// count. It is what makes the data ours rather than merely cached — it can be exported (see
+// /catalogue.jsonl), migrated, or handed to someone else, and it outlives .life.
+//
+// Durability is split deliberately: a NEW infohash is appended to disk immediately, because
+// the magnet is the irreplaceable part. last_seen and the counter live in memory and are
+// flushed on compaction and on shutdown — losing a counter to a hard kill costs nothing,
+// whereas appending a line for every repeat sighting would bloat the file enormously.
+const CATALOGUE_FILE = path.join(DATA_DIR, 'magnet-catalogue.jsonl');
+const CATALOGUE_FLUSH_MS = 30 * 60 * 1000;
+const catalogue = new Map();          // infohash -> { h, t, s, c, src, bg, m, f, l, n }
+let catalogueDirty = false;
+let catalogueLines = 0;
+
+function catLoad() {
+    try {
+        for (const line of fs.readFileSync(CATALOGUE_FILE, 'utf8').split('\n')) {
+            if (!line) continue;
+            try {
+                const r = JSON.parse(line);
+                if (r && r.h) { catalogue.set(r.h, r); catalogueLines++; }
+            } catch (err) { /* torn final line after a hard kill — skip it */ }
+        }
+        console.log(`\u{1F9F2} Magnet catalogue: ${catalogue.size} unique magnets`);
+    } catch (e) {
+        console.log(`\u{1F9F2} No catalogue at ${CATALOGUE_FILE} (${e.code || e.message}) — starting fresh`);
+    }
+}
+
+function catRecord(row, now) {
+    const h = extractInfohash(String(row.link || ''));
+    if (!h) return null;
+    return {
+        h, t: row.title || '', s: row.size || '', c: row.category || '',
+        src: row.source || '', bg: row.is_bgaudio === 1 ? 1 : 0,
+        m: String(row.link || ''), f: now, l: now, n: 1,
+    };
+}
+
+function catPut(rows) {
+    if (!Array.isArray(rows) || !rows.length) return;
+    const now = Date.now();
+    const fresh = [];
+    for (const row of rows) {
+        const rec = catRecord(row, now);
+        if (!rec) continue;
+        const existing = catalogue.get(rec.h);
+        if (existing) {
+            existing.l = now;
+            existing.n = (existing.n || 1) + 1;
+            // A later sighting can carry metadata the first one lacked.
+            if (!existing.c && rec.c) existing.c = rec.c;
+            if (!existing.s && rec.s) existing.s = rec.s;
+            catalogueDirty = true;
+        } else {
+            catalogue.set(rec.h, rec);
+            fresh.push(rec);
+        }
+    }
+    if (!fresh.length) return;
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.appendFileSync(CATALOGUE_FILE, fresh.map(r => JSON.stringify(r)).join('\n') + '\n');
+        catalogueLines += fresh.length;
+    } catch (e) {
+        console.error('⚠️ Catalogue append failed:', e.message);
+    }
+}
+
+function catFlush() {
+    if (!catalogueDirty && catalogueLines <= catalogue.size) return;
+    try {
+        const out = [...catalogue.values()].map(r => JSON.stringify(r)).join('\n') + '\n';
+        fs.writeFileSync(`${CATALOGUE_FILE}.tmp`, out);
+        fs.renameSync(`${CATALOGUE_FILE}.tmp`, CATALOGUE_FILE);   // atomic, as with stats.json
+        catalogueLines = catalogue.size;
+        catalogueDirty = false;
+    } catch (e) {
+        console.error('⚠️ Catalogue flush failed:', e.message);
+    }
+}
+
+// Backfill from the search index so the catalogue starts with everything the addon has ever
+// seen, not only what it sees from now on. Idempotent — a re-run adds only missing infohashes,
+// so it doubles as self-healing if the catalogue file is ever lost.
+function catSeedFromIndex() {
+    let added = 0;
+    try {
+        for (const line of fs.readFileSync(INDEX_FILE, 'utf8').split('\n')) {
+            if (!line) continue;
+            try {
+                const e = JSON.parse(line);
+                const seen = e.ts || Date.now();
+                for (const row of e.rows || []) {
+                    const rec = catRecord(row, seen);
+                    if (rec && !catalogue.has(rec.h)) { catalogue.set(rec.h, rec); added++; }
+                }
+            } catch (err) { /* skip a torn line */ }
+        }
+    } catch (e) {
+        return;   // no index on disk yet
+    }
+    if (added) {
+        catalogueDirty = true;
+        catFlush();
+        console.log(`\u{1F9F2} Seeded ${added} magnets from the search index → ${catalogue.size} total`);
+    }
+}
+
+function catStats() {
+    let bg = 0;
+    const bySource = {};
+    for (const r of catalogue.values()) {
+        if (r.bg) bg++;
+        bySource[r.src || '?'] = (bySource[r.src || '?'] || 0) + 1;
+    }
+    return { magnets: catalogue.size, bgAudio: bg, bySource };
+}
+
+catLoad();
+catSeedFromIndex();
+setInterval(catFlush, CATALOGUE_FLUSH_MS);
+
+
 function recordUpstream(ok) {
     const now = Date.now();
     upstream.events.push({ t: now, ok });
@@ -514,6 +646,7 @@ async function searchZamunda(rawQuery) {
             const data = Array.isArray(res.data) ? res.data : [];
             recordUpstream(true);
             idxPut(query, data);
+            catPut(data);   // self-growing: every search adds any magnet we have not seen
             setCached(key, data);
             return data;
         } catch (e) {
@@ -1645,6 +1778,19 @@ function adminAuth(req, res, next) {
     res.status(403).json({ error: 'Unauthorized. Add ?key=YOUR_KEY' });
 }
 
+// Magnet catalogue — export. The whole point of normalising it is that it can leave:
+// one JSON object per unique magnet, so it can be migrated, backed up or handed on.
+app.get('/catalogue.jsonl', adminAuth, (req, res) => {
+    catFlush();
+    res.type('application/x-ndjson');
+    res.setHeader('Content-Disposition', 'attachment; filename="magnet-catalogue.jsonl"');
+    fs.createReadStream(CATALOGUE_FILE)
+        .on('error', () => res.end())
+        .pipe(res);
+});
+
+app.get('/catalogue/stats', adminAuth, (req, res) => res.json(catStats()));
+
 // Stats — JSON API (public, used by config page)
 app.get('/stats', async (req, res) => {
     const s = await getStats();
@@ -1791,7 +1937,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.5.5</span>
+<span style="font-size:12px;color:var(--dim)">v2.6.0</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1831,7 +1977,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.5.5', index: idxStats(), providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.0', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1847,6 +1993,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.5.5 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.6.0 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
