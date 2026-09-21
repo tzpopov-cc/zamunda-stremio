@@ -231,12 +231,24 @@ Full procedure is in `CLAUDE.md` (local, gitignored). The parts that bite:
   matching is the fix; articles are dropped because releases omit them, and the name need not be a
   prefix because releases bury it ("Special.Ops.Lioness.S01E01"). If this ever over-filters you will
   see `[MISS] … N results, none carry the show name` — that log line exists to make it diagnosable.
-- **Most "misses" are the frozen archive, not a bug.** Verified 2026-09-21 against the live API:
-  Fauda holds S1-S4 (S5 requested), Special Ops Lioness S1, Silo S1-S2 (S3 requested), and Neagley and
-  Agent Kim Reactivated return **0 rows**. Nothing after roughly 2026-08-25 exists in the source and
-  nothing ever will. `[MISS] … 0 episode matches (available: S01,S02,…)` is the addon correctly
-  reporting the season is absent. **Before debugging a miss, check whether the archive has that season
-  at all** — the "available:" list in the log already tells you.
+- **Most "misses" are the archive's coverage ceiling, not a bug.** Measured 2026-09-21 against the
+  live API: Fauda holds S1-S4 (S5 requested), Special Ops Lioness S1, Silo S1-S2 (S3 requested),
+  MobLand S1 complete with no S02, and Neagley / Agent Kim Reactivated / Spider-Noir return **0 rows**.
+  116 of 237 pre-warmed popular titles returned nothing. `[MISS] … 0 episode matches (available:
+  S01,S02,…)` is the addon correctly reporting the season is absent. **Before debugging a miss, check
+  whether the archive has that season at all** — the "available:" list in the log already tells you.
+
+  ⚠️ **On "frozen": be careful how far you take this.** What is established is (a) the ceiling above,
+  and (b) from the Sept-2026 notes, that `zamunda.rip` went CF 521 on 2026-08-25 while `zelka.org` and
+  `arenabg.com` began serving seizure pages. What is NOT established is a precise cutoff date, or that
+  `.life` is static — it does contain 2026 titles. A coverage test of "new" vs "older" Cinemeta
+  catalogues came out the *opposite* way to the frozen hypothesis (13/18 vs 5/18), though that test was
+  weak because both catalogues are almost all 2026 and `limit=5` only shows the cap was hit.
+  **The clean test is `external_id`, which looks sequential by insertion.** Baseline from 18,034 rows
+  sampled on 2026-09-21: **max 853,755**, median 728,324, and the highest ids are all back-catalogue
+  (Two and a Half Men, National Security 2003, Basic Instinct 1992) rather than new releases — which
+  is what a source that stopped taking new content, then trickled in old uploads, looks like. Re-read
+  the max id in a week: if it has climbed, the archive is still growing and "frozen" is wrong.
 - **`configFingerprint` keys the stream cache — anything language-dependent MUST be in it.** `lang`
   was missing until v2.5.4, so a Bulgarian response was served to an English config for the next hour.
   It went unnoticed for ages because the hint rows were hardcoded Bulgarian; the first properly
