@@ -156,6 +156,40 @@ means packets are leaving Hetzner and nothing is coming back — almost always t
 public path second, so if WireGuard drops the addon falls back automatically on the next search. That
 is why the public TCP 7011 rule is deliberately kept — it is the break-glass path, not an oversight.
 
+### The independent magnet catalogue (v2.6.0)
+
+Two stores doing different jobs — keep them straight:
+
+| file | keyed by | job |
+|---|---|---|
+| `data/torrent-index.jsonl` | query string | answer a repeat search with no network; serve during an outage |
+| `data/magnet-catalogue.jsonl` | **infohash** | own the data — deduplicated, enumerable, exportable |
+
+The catalogue grows on every successful search (`catPut`, right next to `idxPut`). A **new** infohash
+is appended to disk immediately, because the magnet is the irreplaceable part; `last_seen` and the
+sighting counter live in memory and flush on compaction (30 min) and on shutdown. Losing a counter to
+a hard kill costs nothing, whereas appending a line per repeat sighting would bloat the file.
+
+`catSeedFromIndex()` runs at boot and backfills any infohash present in the index but missing from the
+catalogue. It is **idempotent**, so it doubles as self-healing: delete the catalogue file and it
+rebuilds from the index on the next restart.
+
+```bash
+# stats
+curl -s "https://zamunda-stremio.tzkppv.com/catalogue/stats?key=$DASHBOARD_KEY"
+
+# export — the whole point of normalising it is that the data can leave
+curl -s "https://zamunda-stremio.tzkppv.com/catalogue.jsonl?key=$DASHBOARD_KEY" -o catalogue.jsonl
+```
+
+Both endpoints use `adminAuth` and are fail-closed: 403 without the key, and 403 for everyone if
+`DASHBOARD_KEY` is unset. Record shape `{h, t, s, c, src, bg, m, f, l, n}` — infohash, title, size,
+category, source, bg-audio flag, full magnet, first seen, last seen, times seen.
+
+**Baseline at deploy, 2026-09-21:** 8,362 unique magnets (1,361 BG audio; z 6,519 · arenabg 1,410 ·
+zelka 433), 3.0 MB on disk. Around two-thirds of the index's growth is organic user traffic and one
+third the 04:00 pre-warm, so this climbs on its own.
+
 ### Seeder counts (v2.4.0)
 
 `.life` returns no swarm data, so counts come from a UDP tracker scrape (BEP 15) against
