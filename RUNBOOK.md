@@ -208,6 +208,12 @@ Full procedure is in `CLAUDE.md` (local, gitignored). The parts that bite:
   `sudo dnf -y module reset nodejs && sudo dnf -y module enable nodejs:20 && sudo dnf -y install nodejs`
 - **`.life` blocks by IP reputation, not headers.** Bare curl, a browser UA and a full browser header
   set all get the same `cf-mitigated: challenge` 403 from a flagged host. Don't debug headers.
+- **`.life` breaks PER TERM, not per character.** It splits the query on whitespace and 500s on
+  certain characters *inside* a term. `Matrix - Reloaded` is fine; `Matrix-Reloaded` is a 500. Testing
+  a character surrounded by spaces therefore gives a false all-clear — that mistake shipped a
+  half-fix and left `Spider-Man`, `Spider-Noir` and `Five-Star` failing overnight. Unspaced, each of
+  `- & # / : ? , . ! %` fails; `'` `(` `)` `+` are fine. `sanitizeQuery` keeps only letters, digits,
+  whitespace and the apostrophe. **Validate with real titles, not with synthetic single characters.**
 - **`.life` returns HTTP 500 for a query containing `:` `?` `,` `.` `!` or `%`** (verified 2026-09-20).
   Cinemeta supplies titles with exactly those characters, so every colon or full-stop title —
   "Daredevil: Born Again", "Mr. Robot", "Star Wars: The Mandalorian and Grogu" — failed with the

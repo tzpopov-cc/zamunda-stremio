@@ -231,7 +231,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.5.4',
+        version: '2.5.5',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -479,7 +479,13 @@ function sourceStatus() {
 // even though the archive had the episodes. Punctuation carries no matching value here —
 // release names are built from dots and spaces — so rather than guess at the server's
 // decoder, keep letters, digits and the punctuation that tested safe, and space out the rest.
-const QUERY_UNSAFE = /[^\p{L}\p{N}\s&'()+#\/-]+/gu;
+// The breakage is per-TERM: the server splits on whitespace and chokes on certain characters
+// inside a term. "Matrix - Reloaded" is fine while "Matrix-Reloaded" is a 500, which is why
+// testing these characters surrounded by spaces gave a false all-clear. Unspaced, each of
+// - & # / : ? , . ! % fails. Rather than maintain a list that is only as good as the last
+// round of guessing, keep letters, digits, whitespace and the apostrophe (safe either way,
+// and worth keeping for titles like "Don't Look Up") and space out everything else.
+const QUERY_UNSAFE = /[^\p{L}\p{N}\s']+/gu;
 
 function sanitizeQuery(q) {
     return String(q || '').replace(QUERY_UNSAFE, ' ').replace(/\s+/g, ' ').trim();
@@ -1785,7 +1791,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.5.4</span>
+<span style="font-size:12px;color:var(--dim)">v2.5.5</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1825,7 +1831,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.5.4', index: idxStats(), providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.5.5', index: idxStats(), providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1841,6 +1847,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.5.4 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.5.5 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
