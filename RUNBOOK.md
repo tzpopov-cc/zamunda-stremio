@@ -265,6 +265,23 @@ Full procedure is in `CLAUDE.md` (local, gitignored). The parts that bite:
   matching is the fix; articles are dropped because releases omit them, and the name need not be a
   prefix because releases bury it ("Special.Ops.Lioness.S01E01"). If this ever over-filters you will
   see `[MISS] … N results, none carry the show name` — that log line exists to make it diagnosable.
+- **The apostrophe splits the archive in two (v2.6.1).** `.life` drops `'` from the query, so
+  "JoJo's Bizarre Adventure" searches for "jojos" → 0 rows, while "JoJo s Bizarre Adventure" → 42.
+  Neither form is a superset ("We're the Millers" finds `Were.the.Millers`, "We re the Millers" finds
+  `We're.the.Millers`), so every apostrophe query is searched in BOTH forms and merged. The matchers'
+  `normalizeTitle` DROPS apostrophes (and folds accents, and `Grey_s`→`greys`) — spacing them made
+  "Sorcerer's" ≠ "Sorcerers" and "grey s" ≠ "Greys", so those films/shows silently lost releases.
+- **A movie with no matching torrent gets an info row, never "all results" (v2.6.1).** The old
+  `keeping all (fallback)` fired on ~2,100 searches in 21–29.09 and mostly served the WRONG film
+  ("Toy Story 5" → Toy Story 1–4, "Resident Evil" 2026 → the old series). Replayed 223 real titles
+  old-vs-new: 0 regressions among the 139 that were served correctly. Logged as `[GAP]`, not `[MISS]`.
+  Known casualty: films released only under the original-language title (The Invisible Guest =
+  `Contratiempo`). With a confirmed year, the part before a colon is accepted ("Léon: The
+  Professional" = `Leon.1994`).
+- **Dashboard: `MISS` = viewer got nothing; `GAP` = told it is not in the archive.** A BG-audio or
+  quality fallback that serves streams is no longer logged as a miss.
+- **Known, not fixed: anime numbering.** For "Kuroko's Basketball" S3E25 the episode matcher also
+  accepts `Kuroko's Basketball 2 - 01-25` (season-2 range) and absolute-numbered releases.
 - **Most "misses" are the archive's coverage ceiling, not a bug.** Measured 2026-09-21 against the
   live API: Fauda holds S1-S4 (S5 requested), Special Ops Lioness S1, Silo S1-S2 (S3 requested),
   MobLand S1 complete with no S02, and Neagley / Agent Kim Reactivated / Spider-Noir return **0 rows**.

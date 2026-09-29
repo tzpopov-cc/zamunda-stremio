@@ -231,7 +231,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.6.0',
+        version: '2.6.1',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -1215,9 +1215,17 @@ function sortTorrents(torrents, config) {
 // MOVIE MATCHING — keep the film the user actually picked, not sequels/remakes
 // that merely share the name (e.g. "Toy Story" vs "Toy Story 2/3/4").
 // =====================================================
+// Apostrophes are DROPPED, not spaced: "Sorcerer's" must equal the "Sorcerers" that release
+// names use, or the film is treated as a stranger. "Grey_s" (underscore standing in for the
+// apostrophe) is folded back first so it lands on the same word. Accents are folded too —
+// "Léon" is released as "Leon". Both sides of every comparison go through here, so any
+// over-joining is symmetric and cannot create a mismatch.
 function normalizeTitle(s) {
     return (s || '')
+        .normalize('NFD').replace(/[̀-ͯ]/g, '')   // é→e (also й→и — harmless, both sides fold)
         .toLowerCase()
+        .replace(/(\p{L})_(s|t|d|m|ll|re|ve)(?=[_.\s]|$)/gu, "$1'$2")
+        .replace(/['’`]/g, '')
         .replace(/[._]+/g, ' ')               // dots/underscores → spaces
         .replace(/[^\p{L}\p{N}\s]/gu, ' ')    // strip punctuation (keep Cyrillic via \p{L})
         .replace(/\s+/g, ' ')
@@ -1283,7 +1291,12 @@ function matchesMovie(title, name, year, bgName) {
         // Torrent states a year: it must be the right one (±1 for prod/release drift).
         // This rejects both sequels (different year) and same-name remakes.
         if (!years.some(y => Math.abs(y - year) <= 1)) return false;
-        return exact || nameIsPrefix;
+        // With the year confirmed, the title before a colon is enough: "Léon: The Professional"
+        // is released as "Leon.1994…" in Europe. Never without a year — "Avatar" alone must not
+        // match "Avatar: Fire and Ash".
+        const head = name.includes(':') ? normalizeTitle(name.split(':')[0]) : null;
+        const headMatch = !!head && prefix === head;
+        return exact || nameIsPrefix || headMatch;
     }
     // No year on the torrent (or unknown target year) → require an exact title match.
     return exact;
@@ -1342,9 +1355,20 @@ async function resolveStreams(type, fullId, config) {
         if (e) queries.push(`${meta.name} S${s}E${e}`);
     }
 
+    // The apostrophe splits the archive in two. The server drops it from the query, so
+    // "JoJo's Bizarre Adventure" searches for "jojos" and misses every release spelled
+    // "JoJo's" (0 rows), while "JoJo s Bizarre Adventure" finds them (42). Neither form is a
+    // superset — "We're the Millers" finds the "Were.the.Millers" releases and "We re the
+    // Millers" finds the "We're.the.Millers" ones — so search both and merge.
+    const expanded = [];
+    for (const q of queries) {
+        expanded.push(q);
+        if (/['’`]/.test(q)) expanded.push(q.replace(/['’`]/g, ' '));
+    }
+
     let allTorrents = [];
     let upstreamFailed = false;
-    for (const q of queries) {
+    for (const q of expanded) {
         const results = await searchZamunda(q);
         if (results === null) { upstreamFailed = true; continue; }
         allTorrents = allTorrents.concat(results);
@@ -1447,7 +1471,8 @@ async function resolveStreams(type, fullId, config) {
                     };
                 }
                 const titles = allTorrents.slice(0, 3).map(t => t.title.substring(0, 80));
-                logEvent('MISS', `${label} — ${beforeCount} torrents but 0 episode matches${detail} [${titles.join(' | ')}]`);
+                // GAP = the viewer is told why (info row); MISS = they got nothing at all.
+                logEvent(missRow ? 'GAP' : 'MISS', `${label} — ${beforeCount} torrents but 0 episode matches${detail} [${titles.join(' | ')}]`);
                 return missRow ? [missRow] : [];
             }
         }
@@ -1462,7 +1487,21 @@ async function resolveStreams(type, fullId, config) {
             }
             allTorrents = matched;
         } else {
-            console.log(`  movie match 0/${allTorrents.length} — keeping all (fallback)`);
+            // This used to keep ALL results "as a fallback". Measured over 21–29.09.2026 it fired
+            // on ~2,100 searches and mostly served the wrong film as if it were the right one:
+            // "Toy Story 5" got Toy Story 1–4, "Practical Magic 2" the 1998 film, "Resident Evil"
+            // (2026) the old series. The real victims were apostrophe/accent titles, which
+            // normalizeTitle now handles — so an honest "not in the archive" row is what is left.
+            console.log(`  movie match 0/${allTorrents.length} — not in archive`);
+            logEvent('GAP', `${label} — ${allTorrents.length} results, none are this film [${allTorrents.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
+            const bgLang = (config.lang || 'bg') === 'bg';
+            return [{
+                name: bgLang ? 'ℹ️ Няма го в архива\nZamunda BG' : 'ℹ️ Not in the archive\nZamunda BG',
+                title: bgLang
+                    ? `„${meta.name}“${movieYear ? ` (${movieYear})` : ''} го няма в архива.\nИма само заглавия с подобно име.`
+                    : `"${meta.name}"${movieYear ? ` (${movieYear})` : ''} is not in the archive.\nOnly titles with a similar name are.`,
+                url: NOTICE_INFO_URL,
+            }];
         }
     }
 
@@ -1471,7 +1510,10 @@ async function resolveStreams(type, fullId, config) {
     console.log(`  ${filtered.length} after filters`);
     if (filtered.length === 0) {
         const sampleTitles = allTorrents.slice(0, 3).map(t => t.title.substring(0, 80));
-        logEvent('MISS', `${label} — ${allTorrents.length} torrents but 0 after filters (${config.content}|${config.quality}) [${sampleTitles.join(' | ')}]`);
+        // Logged as MISS only when no fallback below rescues it — a BG-audio or quality
+        // fallback that serves streams is not a miss, and counting it as one inflated the
+        // dashboard's miss rate.
+        const logMiss = () => logEvent('MISS', `${label} — ${allTorrents.length} torrents but 0 after filters (${config.content}|${config.quality}) [${sampleTitles.join(' | ')}]`);
 
         // If BG audio filter is the reason, fall back to showing all results with a hint
         if (config.content === 'bgaudio' && allTorrents.length > 0) {
@@ -1484,6 +1526,7 @@ async function resolveStreams(type, fullId, config) {
             if (filtered.length > 0) {
                 config._bgFallback = true; // flag to prepend hint stream later
             } else {
+                logMiss();
                 return [];
             }
         } else {
@@ -1498,9 +1541,11 @@ async function resolveStreams(type, fullId, config) {
                 if (filtered.length > 0) {
                     config._qualityFallback = true;
                 } else {
+                    logMiss();
                     return [];
                 }
             } else {
+                logMiss();
                 return [];
             }
         }
@@ -1833,7 +1878,8 @@ app.get('/dashboard', adminAuth, async (req, res) => {
     const count = Math.min(parseInt(req.query.n) || 50, 500);
     const logs = await getLogs(count);
     const errors = logs.filter(l => l.includes('[ERROR]'));
-    const misses = logs.filter(l => l.includes('[MISS]'));
+    const misses = logs.filter(l => l.includes('[MISS]'));   // viewer got nothing at all
+    const gaps = logs.filter(l => l.includes('[GAP]'));       // not in the archive — viewer is told so
     const searches = logs.filter(l => l.includes('[SEARCH]'));
 
     res.type('html').send(`<!DOCTYPE html>
@@ -1866,6 +1912,7 @@ h1{font-family:'Chakra Petch',sans-serif;font-size:24px;color:var(--gold);text-a
 .log-line:last-child{border:none}
 .t-search{color:var(--blue)}
 .t-miss{color:var(--orange)}
+.t-gap{color:#b0a27a}
 .t-error{color:var(--red)}
 .t-p2p{color:var(--green)}
 .t-rd,.t-tb{color:var(--gold)}
@@ -1890,9 +1937,10 @@ h1{font-family:'Chakra Petch',sans-serif;font-size:24px;color:var(--gold);text-a
 <div class="card"><div class="card-value ${misses.length > 0 ? 'orange' : 'green'}">${(misses.length/Math.max(searches.length,1)*100).toFixed(0)}%</div><div class="card-label">Miss Rate</div></div>
 </div>
 
-<div class="grid" style="grid-template-columns:repeat(2,1fr)">
+<div class="grid" style="grid-template-columns:repeat(3,1fr)">
 <div class="card"><div class="card-value ${errors.length > 0 ? 'red' : 'green'}">${errors.length}</div><div class="card-label">Errors</div></div>
 <div class="card"><div class="card-value orange">${misses.length}</div><div class="card-label">Misses</div></div>
+<div class="card"><div class="card-value">${gaps.length} <span style="font-size:14px;color:var(--dim)">${(gaps.length/Math.max(searches.length,1)*100).toFixed(0)}%</span></div><div class="card-label">Not in archive (told)</div></div>
 </div>
 
 <div class="section-title">Recent Activity (last ${logs.length})</div>
@@ -1901,6 +1949,7 @@ ${logs.map(l => {
     let cls = '';
     if (l.includes('[SEARCH]')) cls = 't-search';
     else if (l.includes('[MISS]')) cls = 't-miss';
+    else if (l.includes('[GAP]')) cls = 't-gap';
     else if (l.includes('[ERROR]')) cls = 't-error';
     else if (l.includes('[P2P]')) cls = 't-p2p';
     else if (l.includes('[RD]')) cls = 't-rd';
@@ -1937,7 +1986,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.6.0</span>
+<span style="font-size:12px;color:var(--dim)">v2.6.1</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -1954,11 +2003,13 @@ app.get('/logs', adminAuth, async (req, res) => {
     const logs = await getLogs(count);
     const errors = logs.filter(l => l.includes('[ERROR]'));
     const misses = logs.filter(l => l.includes('[MISS]'));
+    const gaps = logs.filter(l => l.includes('[GAP]'));
     const searches = logs.filter(l => l.includes('[SEARCH]'));
     res.json({
         total: logs.length,
         searches: searches.length,
         misses: misses.length,
+        gaps: gaps.length,
         errors: errors.length,
         missDetails: misses,
         logs
@@ -1977,7 +2028,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.0', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.1', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -1993,6 +2044,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.6.0 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.6.1 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
