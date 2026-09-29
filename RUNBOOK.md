@@ -60,6 +60,35 @@ curl -sS -o /dev/null -w "%{http_code}\n" -H "User-Agent: Mozilla/5.0" \
 
 ## Recovery
 
+### Magnet catalogue — backups and restore
+
+Pulled nightly over HTTPS from the key-protected `/catalogue.jsonl` export by
+`backup-catalogue.sh` (in this repo). A download is kept only if every line is a valid record and
+the count is ≥ 90% of the last good backup; a failure is pushed to the ntfy source-monitor topic.
+
+| Where | Schedule | Copies | Key file |
+|---|---|---|---|
+| Oracle `/var/backups/zamunda-catalogue/` | root cron 05:30 UTC | 30 dated `.jsonl.gz` + `latest` | `/etc/zamunda-backup.env` (root 600) |
+| Mac `~/Backups/zamunda-catalogue/` | launchd `com.tzkppv.zamunda-backup` 09:00 local (runs on wake if missed) | same | `~/.config/zamunda/backup.env` (600) |
+
+Logs: Oracle `/var/log/zamunda-backup.log`, Mac `~/Backups/zamunda-catalogue/backup.log`.
+The Mac job runs a copy at `~/.local/bin/zamunda-backup-catalogue.sh` (launchd cannot read
+`~/Downloads`) — re-`install` it after changing the script. If `DASHBOARD_KEY` is rotated, update
+both key files or the backups fail (loudly).
+
+**Restore** (verified 2026-09-29 — an addon started from the backup alone loads every magnet):
+
+```bash
+zcat latest.jsonl.gz > magnet-catalogue.jsonl
+scp magnet-catalogue.jsonl root@178.104.89.141:/opt/personal/sites/zamunda-stremio/data/
+ssh root@178.104.89.141 'cd /opt/personal/sites/zamunda-stremio && docker compose restart'
+```
+
+Records carry `x` (the archive's `external_id`) and `d` (its description) since v2.6.2; older
+records were backfilled from the search index at boot. `/catalogue/stats` reports `maxArchiveId` —
+the number to watch to see whether `.life` is still growing (853,782 on 2026-09-29).
+
+
 ### Egress proxy (Oracle)
 
 ```bash

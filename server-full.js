@@ -231,7 +231,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.6.1',
+        version: '2.6.2',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -473,7 +473,7 @@ idxLoad();
 // whereas appending a line for every repeat sighting would bloat the file enormously.
 const CATALOGUE_FILE = path.join(DATA_DIR, 'magnet-catalogue.jsonl');
 const CATALOGUE_FLUSH_MS = 30 * 60 * 1000;
-const catalogue = new Map();          // infohash -> { h, t, s, c, src, bg, m, f, l, n }
+const catalogue = new Map();          // infohash -> { h, t, s, c, src, bg, m, x, d, f, l, n }
 let catalogueDirty = false;
 let catalogueLines = 0;
 
@@ -498,8 +498,24 @@ function catRecord(row, now) {
     return {
         h, t: row.title || '', s: row.size || '', c: row.category || '',
         src: row.source || '', bg: row.is_bgaudio === 1 ? 1 : 0,
-        m: String(row.link || ''), f: now, l: now, n: 1,
+        m: String(row.link || ''),
+        // The archive's own id and description were dropped until v2.6.2. The id is what tells
+        // whether .life is still growing and maps a record back to its source; the description
+        // often carries the Bulgarian title ("Resident Evil: The Final Chapter / Заразно зло").
+        x: Number.isInteger(row.external_id) ? row.external_id : null,
+        d: row.description || '',
+        f: now, l: now, n: 1,
     };
+}
+
+// Fill fields an older record lacks from a newer sighting. Returns true if anything changed.
+function catEnrich(existing, rec) {
+    let changed = false;
+    for (const k of ['c', 's', 'd']) {
+        if (!existing[k] && rec[k]) { existing[k] = rec[k]; changed = true; }
+    }
+    if (existing.x == null && rec.x != null) { existing.x = rec.x; changed = true; }
+    return changed;
 }
 
 function catPut(rows) {
@@ -513,9 +529,7 @@ function catPut(rows) {
         if (existing) {
             existing.l = now;
             existing.n = (existing.n || 1) + 1;
-            // A later sighting can carry metadata the first one lacked.
-            if (!existing.c && rec.c) existing.c = rec.c;
-            if (!existing.s && rec.s) existing.s = rec.s;
+            catEnrich(existing, rec);   // a later sighting can carry metadata the first one lacked
             catalogueDirty = true;
         } else {
             catalogue.set(rec.h, rec);
@@ -547,9 +561,10 @@ function catFlush() {
 
 // Backfill from the search index so the catalogue starts with everything the addon has ever
 // seen, not only what it sees from now on. Idempotent — a re-run adds only missing infohashes,
-// so it doubles as self-healing if the catalogue file is ever lost.
+// so it doubles as self-healing if the catalogue file is ever lost. It also fills fields that
+// older records lack (the archive id and description, first kept in v2.6.2).
 function catSeedFromIndex() {
-    let added = 0;
+    let added = 0, enriched = 0;
     try {
         for (const line of fs.readFileSync(INDEX_FILE, 'utf8').split('\n')) {
             if (!line) continue;
@@ -558,28 +573,32 @@ function catSeedFromIndex() {
                 const seen = e.ts || Date.now();
                 for (const row of e.rows || []) {
                     const rec = catRecord(row, seen);
-                    if (rec && !catalogue.has(rec.h)) { catalogue.set(rec.h, rec); added++; }
+                    if (!rec) continue;
+                    const existing = catalogue.get(rec.h);
+                    if (!existing) { catalogue.set(rec.h, rec); added++; }
+                    else if (catEnrich(existing, rec)) enriched++;
                 }
             } catch (err) { /* skip a torn line */ }
         }
     } catch (e) {
         return;   // no index on disk yet
     }
-    if (added) {
+    if (added || enriched) {
         catalogueDirty = true;
         catFlush();
-        console.log(`\u{1F9F2} Seeded ${added} magnets from the search index → ${catalogue.size} total`);
+        console.log(`\u{1F9F2} Seeded ${added} magnets, enriched ${enriched} from the search index → ${catalogue.size} total`);
     }
 }
 
 function catStats() {
-    let bg = 0;
+    let bg = 0, withId = 0, maxId = 0;
     const bySource = {};
     for (const r of catalogue.values()) {
         if (r.bg) bg++;
+        if (r.x != null) { withId++; if (r.x > maxId) maxId = r.x; }
         bySource[r.src || '?'] = (bySource[r.src || '?'] || 0) + 1;
     }
-    return { magnets: catalogue.size, bgAudio: bg, bySource };
+    return { magnets: catalogue.size, bgAudio: bg, bySource, withArchiveId: withId, maxArchiveId: maxId };
 }
 
 catLoad();
@@ -1986,7 +2005,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.6.1</span>
+<span style="font-size:12px;color:var(--dim)">v2.6.2</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -2028,7 +2047,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.1', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.2', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -2044,6 +2063,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.6.1 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.6.2 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
