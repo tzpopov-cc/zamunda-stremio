@@ -88,6 +88,22 @@ Records carry `x` (the archive's `external_id`) and `d` (its description) since 
 records were backfilled from the search index at boot. `/catalogue/stats` reports `maxArchiveId` —
 the number to watch to see whether `.life` is still growing (853,782 on 2026-09-29).
 
+### Torrent file lists (since v2.6.3)
+
+`data/torrent-files.jsonl` holds the media files of every season pack whose `.torrent` was fetched
+from itorrents, one line per infohash: `{"h": hash, "m": [[index, path, bytes], …]}`. The index is the
+position in the WHOLE torrent (subtitles and .nfo included), which is what Stremio's streaming
+server expects as `fileIdx`. It is a cache, not data to protect: delete it and it rebuilds on demand.
+
+Rollback: the server keeps `server.js.bak-<version>-predeploy` + `config.html.bak-<version>-predeploy`
+for every deploy (2.6.2 and 2.6.3 are there) — copy a pair back and `docker compose up -d --build`.
+
+### zamunda.life reads only the first five words of a query
+
+Everything after the fifth word is ignored (proved 2026-10-07). Long titles therefore get a shortened
+twin query next to the original (`shortenQuery` — stopwords out, year/S01E05 kept). If a long title
+comes back "not in the archive" while a short search on the site finds it, this is the place to look.
+
 
 ### Egress proxy (Oracle)
 

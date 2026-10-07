@@ -8,6 +8,11 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
+// Caddy sits in front on the Docker network. Without this, req.ip is Caddy's container address
+// and every viewer without a Real-Debrid token collapsed into ONE "user" (found 07.10.2026: 341
+// RD token prefixes + one Docker IP stood for the whole P2P audience). Caddy overwrites
+// X-Forwarded-For with the real client address, so trusting the private hop is safe.
+app.set('trust proxy', 'loopback, uniquelocal');
 app.use(cors());
 const PORT = process.env.PORT || 7000;
 const DASHBOARD_KEY = process.env.DASHBOARD_KEY || '';   // set in server .env — no default, never in repo
@@ -42,12 +47,13 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 function getCached(key) {
     const c = cache.get(key);
-    if (c && Date.now() - c.time < CACHE_TTL) return c.data;
+    if (c && Date.now() - c.time < (c.ttl || CACHE_TTL)) return c.data;
     if (c) cache.delete(key);
     return null;
 }
-function setCached(key, data) {
-    cache.set(key, { data, time: Date.now() });
+// `ttl` is optional — entries without one live for CACHE_TTL, as before.
+function setCached(key, data, ttl) {
+    cache.set(key, ttl ? { data, time: Date.now(), ttl } : { data, time: Date.now() });
 }
 // =====================================================
 // STATS — local JSON store (moved off Upstash Redis after the free 500K-command
@@ -66,6 +72,8 @@ const store = {
     preMigrationUsers: new Set(),
     dailyStats: {},             // { 'YYYY-MM-DD': '<json snapshot string>' }
     logs: [],                   // newest-first, capped at 500
+    userSalt: '',               // random, generated once; IPs are only ever stored as HMACs keyed on it
+    today: { date: '', ids: new Set() },   // distinct users seen today -> daily[date].users
 };
 
 function loadStore() {
@@ -79,6 +87,8 @@ function loadStore() {
         store.preMigrationUsers = new Set(d.preMigrationUsers || []);
         store.dailyStats = d.dailyStats || {};
         store.logs = Array.isArray(d.logs) ? d.logs : [];
+        store.userSalt = d.userSalt || '';
+        if (d.today && d.today.date) store.today = { date: d.today.date, ids: new Set(d.today.ids || []) };
         console.log(`💾 Stats loaded: ${store.users.size} users, ${store.counters.streams} streams, ${store.logs.length} logs`);
     } catch (e) {
         console.log(`💾 No stats file at ${STATS_FILE} (${e.code || e.message}) — starting fresh`);
@@ -99,6 +109,8 @@ function persist() {
         preMigrationUsers: [...store.preMigrationUsers],
         dailyStats: store.dailyStats,
         logs: store.logs,
+        userSalt: store.userSalt,
+        today: { date: store.today.date, ids: [...store.today.ids] },
     });
     try {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -111,7 +123,8 @@ function persist() {
 }
 
 loadStore();
-setInterval(persist, 5000);                                    // debounced flush to disk
+if (!store.userSalt) { store.userSalt = crypto.randomBytes(16).toString('hex'); markDirty(); }
+setInterval(persist, 5000);                                   // debounced flush to disk
 ['SIGTERM', 'SIGINT'].forEach(sig => process.on(sig, () => { persist(); catFlush(); process.exit(0); }));
 
 function todayKey() { return new Date().toISOString().substring(0, 10); }
@@ -181,8 +194,9 @@ setInterval(() => {
     const now = Date.now();
     let evicted = 0;
     for (const [key, val] of cache) {
-        if (now - val.time >= CACHE_TTL) { cache.delete(key); evicted++; }
+        if (now - val.time >= (val.ttl || CACHE_TTL)) { cache.delete(key); evicted++; }
     }
+    for (const [h, until] of fileMisses) if (now >= until) fileMisses.delete(h);
     if (evicted > 0) console.log(`🧹 Cache eviction: ${evicted} stale entries removed, ${cache.size} remaining`);
 }, 10 * 60 * 1000);
 
@@ -231,7 +245,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.6.2',
+        version: '2.6.4',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -256,20 +270,34 @@ function buildManifest(config) {
 // =====================================================
 // HELPERS
 // =====================================================
+// Over 29.09–06.10.2026 Cinemeta failed 1,283 times: half 5 s timeouts, clustered in the
+// 21:00–23:00 Bulgarian evening peak, half 404s. A title's name and year do not change, so a
+// lookup is kept for a day (not an hour), trimmed to the four fields this file reads — a full
+// series record carries every episode and would make a day of caching expensive. A timeout or
+// 5xx on the main host is retried once on cinemeta-live, which the main host itself redirects
+// unknown ids to. A 404 is final: it already is cinemeta-live's answer.
+const CINEMETA_FALLBACK = 'https://cinemeta-live.strem.io/meta';
+const META_TTL = 24 * 60 * 60 * 1000;
+
 async function getMetadata(type, imdbId) {
     const key = `meta:${type}:${imdbId}`;
     const cached = getCached(key);
     if (cached) return cached;
-    try {
-        const res = await axios.get(`${CINEMETA_API}/${type}/${imdbId}.json`, { timeout: 5000 });
-        const meta = res.data.meta;
-        // Only cache usable metadata — caching a nameless meta poisons the key for the full TTL
-        if (meta && meta.name) setCached(key, meta);
-        return meta;
-    } catch (e) {
-        console.error('Cinemeta error:', e.message);
-        return null;
+    for (const base of [CINEMETA_API, CINEMETA_FALLBACK]) {
+        try {
+            const res = await axios.get(`${base}/${type}/${imdbId}.json`, { timeout: 5000 });
+            const meta = res.data && res.data.meta;
+            // Only cache usable metadata — caching a nameless meta poisons the key for the full TTL
+            if (!meta || !meta.name) return meta || null;
+            const slim = { name: meta.name, bulgarian_name: meta.bulgarian_name, year: meta.year, releaseInfo: meta.releaseInfo };
+            setCached(key, slim, META_TTL);
+            return slim;
+        } catch (e) {
+            console.error(`Cinemeta error via ${new URL(base).host}:`, e.message);
+            if (e.response && e.response.status === 404) return null;
+        }
     }
+    return null;
 }
 
 // Live upstream health, derived only from real network attempts (our own cache hits prove nothing).
@@ -642,6 +670,33 @@ function sanitizeQuery(q) {
     return String(q || '').replace(QUERY_UNSAFE, ' ').replace(/\s+/g, ' ').trim();
 }
 
+// zamunda.life reads only the FIRST FIVE WORDS of a query and silently ignores the rest (proved
+// 07.10.2026: "the the the the Two Towers" → 50 random rows, "Two Towers the the the the" → the 13
+// right ones; every LOTR query longer than five words returns the same 50 rows as "Lord of the
+// Rings" — games and Rings of Power, never the film). So "The Lord of the Rings: The Two Towers"
+// was really a search for "The Lord of the Rings", and a long show name lost its S01E05.
+// ~9% of requested films and ~8% of series hit this. A shortened twin is searched ALONGSIDE the
+// original, never instead: "The Book of Boba Fett S01E02" finds the season pack while
+// "Book Boba Fett S01E02" finds nothing, and "Star Trek Strange New Worlds S01E03" is the reverse.
+const LIFE_MAX_TERMS = 5;
+const QUERY_STOPWORDS = new Set(['the', 'a', 'an', 'of', 'and', 'in', 'on', 'at', 'to', 'for', 'with', 'from', 'by', 'or', 'vs']);
+const QUERY_TAIL = /^((19|20)\d{2}|S\d{1,2}(E\d{1,3})?)$/i;   // a year or S01 / S01E05 — always kept
+
+function shortenQuery(q) {
+    const words = sanitizeQuery(q).split(' ').filter(Boolean);
+    if (words.length <= LIFE_MAX_TERMS) return null;
+    const tail = QUERY_TAIL.test(words[words.length - 1]) ? [words[words.length - 1]] : [];
+    let head = words.slice(0, words.length - tail.length).filter(w => !QUERY_STOPWORDS.has(w.toLowerCase()));
+    // Still too long: drop the shortest words first, keeping the order of the rest.
+    while (head.length > LIFE_MAX_TERMS - tail.length) {
+        let k = 0;
+        head.forEach((w, i) => { if (w.length < head[k].length) k = i; });
+        head = head.filter((_, i) => i !== k);
+    }
+    const short = [...head, ...tail].join(' ');
+    return short && short !== words.join(' ') ? short : null;
+}
+
 async function searchZamunda(rawQuery) {
     const query = sanitizeQuery(rawQuery);
     if (!query) return [];
@@ -912,55 +967,128 @@ async function mapLimit(items, limit, fn) {
     await Promise.all(workers);
 }
 
-// Fetch + decode a torrent's file list, cached BY INFOHASH.
-// A season pack serves every episode in it, so one fetch now covers S01E01..S01E10
-// instead of re-downloading the same .torrent once per episode request.
-// Failures are negative-cached (`false`) so a dead/missing hash isn't retried
-// — that retry storm was ~5.4K wasted 5s requests per week, all in the user's path.
-async function fetchTorrentFiles(infohash) {
-    const key = `torrentfiles:${infohash}`;
-    const cached = getCached(key);
-    if (cached !== null) return cached;          // `false` = known-bad, don't refetch
+// =====================================================
+// TORRENT FILE LISTS — persistent, keyed by infohash
+// =====================================================
+// What a hash contains never changes, so a file list fetched once is kept on disk for good
+// (data/torrent-files.jsonl, one line per hash), like the magnet catalogue. Only media files
+// are stored, each as [index, path, bytes].
+//
+// ⛔ The index is the file's position in the WHOLE torrent, subtitles and .nfo included. That is
+// what Stremio's streaming server reads: enginefs serves `engine.files[fileIdx]`. Until v2.6.3
+// this counted video files only, which points at the wrong file whenever a non-video file sorts
+// before the episode — e.g. "S01E02.bg.srt" before "S01E02.mkv" in a Bulgarian pack.
+const FILES_FILE = path.join(DATA_DIR, 'torrent-files.jsonl');
+const MEDIA_EXT = /\.(mkv|mp4|avi|mov|m4v|ts|webm|wmv|mpg)$/i;
+const FILES_FETCH_MS = 8000;               // background fetch; the viewer waits FILES_WAIT_MS at most
+const FILES_WAIT_MS = 2500;
+// 403/404 usually mean itorrents does not have the torrent, but not for good: a hash that drew a
+// 403 from the server on 06.10 answered 200 everywhere the next morning. So: hours, not days.
+const FILES_MISS_LONG_MS = 6 * 60 * 60 * 1000;        // 403/404
+const FILES_MISS_RETRY_MS = 20 * 60 * 1000;           // timeout/5xx: worth another try soon
+const fileLists = new Map();               // infohash -> [[idx, path, bytes], ...]
+const fileMisses = new Map();              // infohash -> do-not-retry-before timestamp
+const fileFetches = new Map();             // infohash -> in-flight Promise, shared by concurrent requests
 
+function filesLoad() {
     try {
-        const res = await axios.get(
-            `https://itorrents.org/torrent/${infohash}.torrent`,
-            { responseType: 'arraybuffer', timeout: 5000, maxRedirects: 3 }
-        );
-        const [torrent] = decodeBencode(Buffer.from(res.data));
-        const info = torrent.info || torrent['info'];
-        // Single-file torrents have no `files` list — nothing to index into
-        const files = (info && info.files)
-            ? info.files.map(f => (f.path || []).map(p => p.toString()).join('/'))
-            : false;
-        setCached(key, files);
-        return files;
+        for (const line of fs.readFileSync(FILES_FILE, 'utf8').split('\n')) {
+            if (!line) continue;
+            try {
+                const r = JSON.parse(line);
+                if (r && r.h && Array.isArray(r.m)) fileLists.set(r.h, r.m);
+            } catch (err) { /* torn final line after a hard kill — skip it */ }
+        }
+        console.log(`📁 Torrent file lists: ${fileLists.size}`);
     } catch (e) {
-        console.error('  ⚠️ fileIdx resolve failed:', e.message);
-        setCached(key, false);
-        return false;
+        console.log(`📁 No torrent file lists at ${FILES_FILE} (${e.code || e.message}) — starting fresh`);
+    }
+}
+filesLoad();
+
+function filesPut(infohash, media) {
+    fileLists.set(infohash, media);
+    try {
+        fs.mkdirSync(DATA_DIR, { recursive: true });
+        fs.appendFileSync(FILES_FILE, JSON.stringify({ h: infohash, m: media }) + '\n');
+    } catch (e) {
+        console.error('⚠️ File list append failed:', e.message);
     }
 }
 
+// Fetch + decode a torrent's file list. Returns the media list, or false when it cannot be had.
+// Concurrent requests for the same hash share one fetch.
+function fetchTorrentFiles(infohash) {
+    if (fileLists.has(infohash)) return Promise.resolve(fileLists.get(infohash));
+    const until = fileMisses.get(infohash);
+    if (until && Date.now() < until) return Promise.resolve(false);
+    if (fileFetches.has(infohash)) return fileFetches.get(infohash);
+
+    const p = (async () => {
+        try {
+            // itorrents.org now answers with two redirects (→ http://itorrents.net → https)
+            const res = await axios.get(
+                `https://itorrents.org/torrent/${infohash}.torrent`,
+                { responseType: 'arraybuffer', timeout: FILES_FETCH_MS, maxRedirects: 5 }
+            );
+            const [torrent] = decodeBencode(Buffer.from(res.data));
+            const info = torrent && torrent.info;
+            if (!info) throw new Error('no info dictionary in the .torrent');
+            const media = [];
+            if (Array.isArray(info.files)) {
+                info.files.forEach((f, idx) => {
+                    const p = (f.path || []).map(x => x.toString()).join('/');
+                    if (MEDIA_EXT.test(p)) media.push([idx, p, Number(f.length) || 0]);
+                });
+            } else {
+                const name = info.name ? info.name.toString() : '';
+                if (MEDIA_EXT.test(name)) media.push([0, name, Number(info.length) || 0]);
+            }
+            filesPut(infohash, media);
+            fileMisses.delete(infohash);
+            return media;
+        } catch (e) {
+            const status = e.response && e.response.status;
+            const missing = status === 403 || status === 404;
+            fileMisses.set(infohash, Date.now() + (missing ? FILES_MISS_LONG_MS : FILES_MISS_RETRY_MS));
+            console.error('  ⚠️ fileIdx resolve failed:', e.message);
+            return false;
+        } finally {
+            fileFetches.delete(infohash);
+        }
+    })();
+    fileFetches.set(infohash, p);
+    return p;
+}
+
 async function resolveFileIdx(infohash, season, episode) {
-    const files = await fetchTorrentFiles(infohash);
-    if (!files) return null;
+    const media = await fetchTorrentFiles(infohash);
+    if (!media || !media.length) return null;
 
     const s = String(season).padStart(2, '0');
     const e = String(episode).padStart(2, '0');
-    const pattern = new RegExp(`S${s}E${e}\\b`, 'i');
+    const pattern = new RegExp(`S${s}E${e}(?!\\d)`, 'i');
+    // Match the file NAME: a folder called "S01E01-E10" would otherwise match every file in it.
+    const hits = media.filter(([, p]) => pattern.test(p.split('/').pop()));
+    if (!hits.length) return null;
+    // A sample shares the episode's name; the episode itself is the biggest file.
+    const [idx, p] = hits.reduce((a, b) => (b[2] > a[2] ? b : a));
+    console.log(`  📁 fileIdx ${idx} → ${p}`);
+    return idx;
+}
 
-    const videoExts = /\.(mkv|mp4|avi|mov|m4v|ts|webm)$/i;
-    let videoIdx = 0;
-    for (const path of files) {
-        if (!videoExts.test(path)) continue;
-        if (pattern.test(path)) {
-            console.log(`  📁 fileIdx ${videoIdx} → ${path}`);
-            return videoIdx;
-        }
-        videoIdx++;
-    }
-    return null;
+// Resolve what can be resolved within `ms`; fetches still running carry on in the background and
+// land in the store for the next request. Returns true when everything finished in time.
+async function resolvePacksWithin(packs, season, episode, ms) {
+    const work = mapLimit(packs, 5, async (t) => {
+        const idx = await resolveFileIdx(t._infohash, season, episode);
+        if (idx !== null) t._resolvedFileIdx = idx;
+    }).catch(() => {});   // never throws today; a late rejection must not become an unhandled one
+    let timer;
+    const deadline = new Promise(r => { timer = setTimeout(() => r(false), ms); });
+    const done = await Promise.race([work.then(() => true), deadline]);
+    clearTimeout(timer);
+    return done;
 }
 
 // =====================================================
@@ -1384,6 +1512,11 @@ async function resolveStreams(type, fullId, config) {
         expanded.push(q);
         if (/['’`]/.test(q)) expanded.push(q.replace(/['’`]/g, ' '));
     }
+    // Five-word ceiling on the archive's side — see shortenQuery.
+    for (const q of [...expanded]) {
+        const short = shortenQuery(q);
+        if (short && !expanded.includes(short)) expanded.push(short);
+    }
 
     let allTorrents = [];
     let upstreamFailed = false;
@@ -1578,15 +1711,23 @@ async function resolveStreams(type, fullId, config) {
 
     filtered = sortTorrents(filtered, config);
 
+    // Pure P2P: drop the dead rows before anything else is spent on them (file lists included),
+    // and before the hint rows below count what is being shown.
+    const p2pOnly = !(config.debrid === 'realdebrid' && config.rdtoken) && !(config.debrid === 'torbox' && config.tbtoken);
+    if (p2pOnly) filtered = dropDeadP2P(filtered);
+
     // Resolve correct fileIdx for pack torrents (season packs / complete series)
     if (season && episode) {
         const packs = filtered.filter(t => t._matchType === 'season' || t._matchType === 'fallback');
         if (packs.length > 0) {
-            // Capped: a cold result set would otherwise fire one 5s request per pack, all at once
-            await mapLimit(packs, 5, async (t) => {
-                const idx = await resolveFileIdx(t._infohash, season, episode);
-                if (idx !== null) t._resolvedFileIdx = idx;
-            });
+            // The viewer waits at most FILES_WAIT_MS. A slow itorrents used to hold the whole
+            // answer for 5–15 s; now the stragglers finish in the background and the answer is
+            // kept out of the stream cache, so the next request is served with them resolved.
+            const done = await resolvePacksWithin(packs, season, episode, FILES_WAIT_MS);
+            if (!done) {
+                config._filesPending = true;
+                console.log(`  ⏳ fileIdx: answering after ${FILES_WAIT_MS} ms, the rest resolves in the background`);
+            }
         }
     }
 
@@ -1631,7 +1772,7 @@ async function resolveStreams(type, fullId, config) {
                     : `TorBox token expired or invalid.\nReconfigure the addon with a new token.`,
                 url: NOTICE_INFO_URL
             }];
-            const p2pStreams = filtered.map(t => buildStream(t, null, 'p2p'));
+            const p2pStreams = dropDeadP2P(filtered).map(t => buildStream(t, null, 'p2p'));
             const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
             console.log(`  → TB auth error, ${p2pStreams.length} P2P fallback in ${elapsed}s`);
             logEvent('TB', `0 TB (auth error) + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
@@ -1653,8 +1794,7 @@ async function resolveStreams(type, fullId, config) {
 
         if (debridMode === 'all') {
             const resolvedHashes = new Set(results.filter(r => r.url).map(r => r.torrent._infohash));
-            const p2pStreams = filtered
-                .filter(t => !resolvedHashes.has(t._infohash))
+            const p2pStreams = dropDeadP2P(filtered.filter(t => !resolvedHashes.has(t._infohash)))
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${tbStreams.length} TB + ${p2pStreams.length} P2P in ${elapsed}s`);
             logEvent('TB', `${tbStreams.length} TB + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
@@ -1682,8 +1822,7 @@ async function resolveStreams(type, fullId, config) {
 
         if (debridMode === 'all') {
             const resolvedHashes = new Set(results.filter(r => r.url).map(r => r.torrent._infohash));
-            const p2pStreams = filtered
-                .filter(t => !resolvedHashes.has(t._infohash))
+            const p2pStreams = dropDeadP2P(filtered.filter(t => !resolvedHashes.has(t._infohash)))
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s`);
             logEvent('RD', `${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
@@ -1699,6 +1838,41 @@ async function resolveStreams(type, fullId, config) {
     console.log(`  P2P mode: returning ${filtered.length} streams`);
     logEvent('P2P', `${filtered.length} streams — "${meta.name}"`);
     return [...hints, ...filtered.map(torrent => buildStream(torrent, null, 'p2p'))];
+}
+
+// Where Stremio looks for peers. With no `sources` on a stream its streaming server searches the
+// DHT ONLY (enginefs getDefaults: peerSearch.sources = ['dht:<hash>']) — it never asks the
+// tracker the magnet names, which is exactly where the seeders we count and display live.
+// opentrackr comes first (every archive magnet carries it); the rest answered a UDP connect on
+// 07.10.2026. Scraping 242 served magnets on all of them found seeders that opentrackr lacked on
+// just one, so this list is about reaching the swarm at all, not about a longer list.
+const PEER_TRACKERS = [
+    'udp://tracker.opentrackr.org:1337/announce',
+    'udp://open.stealth.si:80/announce',
+    'udp://tracker-udp.gbitt.info:80/announce',
+    'udp://tracker.qu.ax:6969/announce',
+];
+
+function peerSources(torrent) {
+    const own = [];
+    try {
+        const q = String(torrent.link || '').split('?')[1] || '';
+        for (const [k, v] of new URLSearchParams(q)) if (k === 'tr' && /^(udp|https?):\/\//i.test(v)) own.push(v);
+    } catch (e) { /* malformed magnet — the default list still applies */ }
+    const trackers = [...new Set([...own, ...PEER_TRACKERS])];
+    return [...trackers.map(t => `tracker:${t}`), `dht:${torrent._infohash}`];
+}
+
+// A P2P row whose swarm has no seeders will not start. Once at least one row is proven alive,
+// the dead ones only push it down the list, so drop them. If none is proven alive (or the
+// scrape failed and nothing has a count), keep everything — an unknown is not a dead torrent.
+function dropDeadP2P(torrents) {
+    const isDead = t => typeof t._seeders === 'number' && t._seeders === 0;
+    const anyAlive = torrents.some(t => typeof t._seeders === 'number' && t._seeders > 0);
+    if (!anyAlive) return torrents;
+    const kept = torrents.filter(t => !isDead(t));
+    if (kept.length < torrents.length) console.log(`  🪦 hid ${torrents.length - kept.length} P2P rows with 0 seeders`);
+    return kept;
 }
 
 function buildStream(torrent, url, mode) {
@@ -1756,12 +1930,13 @@ function buildStream(torrent, url, mode) {
         stream.url = url;
     } else {
         stream.infoHash = torrent._infohash;
-        // For packs with resolved file index, use it; for single episodes/movies use 0
-        if (torrent._resolvedFileIdx !== undefined) {
-            stream.fileIdx = torrent._resolvedFileIdx;
-        } else if (torrent._matchType !== 'season' && torrent._matchType !== 'fallback') {
-            stream.fileIdx = 0;
-        }
+        // Only a file index we have actually located is sent. Without one, Stremio picks the file
+        // itself: the largest media file, or — in the Stremio 5 player, which passes the season
+        // and episode to its streaming server — the file named for that episode. The old blind
+        // `fileIdx: 0` for movies and single episodes pointed at whatever sorts first, which in
+        // a folder release is often a subtitle or an .nfo.
+        if (torrent._resolvedFileIdx !== undefined) stream.fileIdx = torrent._resolvedFileIdx;
+        stream.sources = peerSources(torrent);
     }
 
     return stream;
@@ -1778,12 +1953,25 @@ function buildStream(torrent, url, mode) {
 // =====================================================
 
 // Track unique user from IP or RD token
+// RD users stay keyed by token prefix so the existing set keeps counting them once. Everyone else
+// is keyed by an HMAC of their IP — the address itself is never written to disk.
 function getUserId(req, config) {
-    return config?.rdtoken ? config.rdtoken.substring(0, 8) : (req.ip || req.headers['x-forwarded-for'] || 'unknown');
+    if (config?.rdtoken) return config.rdtoken.substring(0, 8);
+    const ip = req.ip || 'unknown';
+    return 'h:' + crypto.createHmac('sha256', store.userSalt).update(ip).digest('hex').substring(0, 16);
 }
 function trackUser(req, config) {
     const id = getUserId(req, config);
     sadd('users', id);
+    // Distinct users per day, so a jump in requests can be told apart from a jump in people.
+    const today = todayKey();
+    if (store.today.date !== today) store.today = { date: today, ids: new Set() };
+    if (!store.today.ids.has(id)) {
+        store.today.ids.add(id);
+        const d = (store.daily[today] = store.daily[today] || { streams: 0, pageViews: 0 });
+        d.users = store.today.ids.size;
+        markDirty();
+    }
 }
 function trackMigration(req, config) {
     const id = getUserId(req, config);
@@ -1816,6 +2004,9 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         trackUser(req, config);
         const { type, id } = req.params;
         if (!['movie', 'series'].includes(type)) return res.json({ streams: [] });
+        // The manifest asks for IMDb ids only, but some clients send kitsu:/tmdb: ids anyway.
+        // Cinemeta cannot name them, so answer at once instead of spending a lookup on a 404.
+        if (!/^tt\d+$/.test(id.split(':')[0])) return res.json({ streams: [] });
 
         const cacheKey = `streams:${configFingerprint(config)}:${id}`;
         const cached = getCached(cacheKey);
@@ -1825,7 +2016,7 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         }
 
         const streams = await resolveStreams(type, id, config);
-        if (streams.length > 0 && !streams._noCache) setCached(cacheKey, streams);
+        if (streams.length > 0 && !streams._noCache && !config._filesPending) setCached(cacheKey, streams);
         res.json({ streams });
     } catch (e) {
         console.error('Stream handler error:', e);
@@ -1890,6 +2081,7 @@ app.get('/dashboard', adminAuth, async (req, res) => {
             ...d,
             dayStreams: getDailyCount(d.date, 'streams'),
             dayViews: getDailyCount(d.date, 'pageViews'),
+            dayUsers: getDailyCount(d.date, 'users'),
         }));
         dailyCounts.sort((a, b) => b.date.localeCompare(a.date));
         history.push(...dailyCounts);
@@ -1985,13 +2177,14 @@ ${history.length > 0 ? `
 <div class="log-box" style="max-height:30vh">
 <table style="width:100%;border-collapse:collapse;font-size:12px">
 <tr style="color:var(--gold);text-align:left;border-bottom:1px solid var(--border)">
-<th style="padding:6px 4px">Date</th><th>Users</th><th>Migrated</th><th>New</th><th>Streams</th><th>Page Views</th></tr>
+<th style="padding:6px 4px">Date</th><th>Users</th><th>Active</th><th>Migrated</th><th>New</th><th>Streams</th><th>Page Views</th></tr>
 ${history.map((h, i) => {
     const prev = history[i + 1]; // sorted desc, so i+1 is previous day
     const dMigrated = prev ? h.migrated - prev.migrated : h.migrated;
     const dNew = prev ? h.newUsers - prev.newUsers : h.newUsers;
     return '<tr style="border-bottom:1px solid rgba(255,255,255,0.03)"><td style="padding:4px;color:var(--dim)">' + h.date.substring(5) + '</td>'
     + '<td>' + h.totalUsers + '</td>'
+    + '<td>' + (h.dayUsers || '–') + '</td>'
     + '<td style="color:var(--green)">' + (dMigrated > 0 ? '+' + dMigrated : dMigrated) + '</td>'
     + '<td style="color:var(--blue)">' + (dNew > 0 ? '+' + dNew : dNew) + '</td>'
     + '<td style="color:var(--gold)">' + (h.dayStreams || 0) + '</td>'
@@ -2005,7 +2198,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.6.2</span>
+<span style="font-size:12px;color:var(--dim)">v2.6.4</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -2047,7 +2240,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.2', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.4', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -2063,6 +2256,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.6.2 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.6.4 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
