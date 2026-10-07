@@ -74,6 +74,9 @@ const store = {
     logs: [],                   // newest-first, capped at 500
     userSalt: '',               // random, generated once; IPs are only ever stored as HMACs keyed on it
     today: { date: '', ids: new Set() },   // distinct users seen today -> daily[date].users
+    lastSeen: {},               // user id -> 'YYYY-MM-DD' last active (since v2.6.5) -> active 7/30 days
+    lastSeenSince: '',          // first day lastSeen was kept — a 30-day count is partial until then + 29
+    archive: null,              // the source archive's own size: { total, zamunda, arena, zelka, at }
 };
 
 function loadStore() {
@@ -89,6 +92,14 @@ function loadStore() {
         store.logs = Array.isArray(d.logs) ? d.logs : [];
         store.userSalt = d.userSalt || '';
         if (d.today && d.today.date) store.today = { date: d.today.date, ids: new Set(d.today.ids || []) };
+        store.lastSeen = d.lastSeen || {};
+        store.lastSeenSince = d.lastSeenSince || '';
+        store.archive = d.archive || null;
+        // First boot with lastSeen: today's users are already known, so start from them.
+        if (!store.lastSeenSince && store.today.date) {
+            store.lastSeenSince = store.today.date;
+            for (const id of store.today.ids) store.lastSeen[id] = store.today.date;
+        }
         console.log(`💾 Stats loaded: ${store.users.size} users, ${store.counters.streams} streams, ${store.logs.length} logs`);
     } catch (e) {
         console.log(`💾 No stats file at ${STATS_FILE} (${e.code || e.message}) — starting fresh`);
@@ -111,6 +122,9 @@ function persist() {
         logs: store.logs,
         userSalt: store.userSalt,
         today: { date: store.today.date, ids: [...store.today.ids] },
+        lastSeen: store.lastSeen,
+        lastSeenSince: store.lastSeenSince,
+        archive: store.archive,
     });
     try {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -169,7 +183,24 @@ function getStats() {
         uniqueUsers: store.users.size,
         migratedUsers: store.migratedUsers.size,
         newUsers: store.newUsers.size,
+        usersPerDay: usersPerDay(),
+        archiveTorrents: store.archive ? store.archive.total : null,
     };
+}
+
+// The landing page's user number. The all-time set is not a headcount (RD accounts since launch
+// plus P2P IPs since v2.6.3, and an IP that changes is a new id), so the page shows distinct users
+// per day instead: the average of the last 7 complete days, or today so far until one exists.
+// An IP rarely changes within a day, so this is the count least inflated by IP-based counting.
+function usersPerDay() {
+    const today = todayKey();
+    const days = [];
+    for (let i = 1; i <= 7; i++) {
+        const u = getDailyCount(dayKeyAgo(i), 'users');
+        if (u) days.push(u);
+    }
+    if (days.length) return Math.floor(days.reduce((a, b) => a + b, 0) / days.length);
+    return store.today.date === today ? store.today.ids.size : 0;
 }
 
 // Snapshot user totals once per day (for the growth-delta table)
@@ -245,7 +276,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.6.4',
+        version: '2.6.5',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -626,12 +657,65 @@ function catStats() {
         if (r.x != null) { withId++; if (r.x > maxId) maxId = r.x; }
         bySource[r.src || '?'] = (bySource[r.src || '?'] || 0) + 1;
     }
-    return { magnets: catalogue.size, bgAudio: bg, bySource, withArchiveId: withId, maxArchiveId: maxId };
+    return { magnets: catalogue.size, bgAudio: bg, bySource, withArchiveId: withId, maxArchiveId: maxId,
+             archive: store.archive, coverage: catCoverage(bySource) };
+}
+
+// Catalogue source tag -> the key the archive's /api/stats uses for the same site.
+const ARCHIVE_SOURCES = { z: 'zamunda', arenabg: 'arena', zelka: 'zelka' };
+
+// Share of the archive the catalogue holds — overall and per site. Null until the archive's size is known.
+function catCoverage(bySource) {
+    const a = store.archive;
+    if (!a || !a.total) return null;
+    const pct = (n, of) => (of ? Math.round(n / of * 1000) / 10 : null);
+    const out = { all: pct(catalogue.size, a.total), sites: {} };
+    for (const [src, key] of Object.entries(ARCHIVE_SOURCES)) {
+        const have = bySource[src] || 0;
+        out.sites[key] = { have, of: a[key] || 0, pct: pct(have, a[key]) };
+    }
+    return out;
+}
+
+// New magnets per UTC day, from each record's first-seen time — exact back to the first day the
+// catalogue existed, so the daily table needs no stored history of its own.
+function catNewByDay() {
+    const out = {};
+    for (const r of catalogue.values()) {
+        if (!r.f) continue;
+        const d = new Date(r.f).toISOString().substring(0, 10);
+        out[d] = (out[d] || 0) + 1;
+    }
+    return out;
+}
+
+// The archive's own size, read through the egress proxy's /stats (the archive answers
+// {"total":448023,"zamunda":…,"arena":…,"zelka":…}). It barely moves, so every 6 h is plenty;
+// the last good answer is persisted and shown with its age if the proxy is unreachable.
+const ARCHIVE_STATS_MS = 6 * 60 * 60 * 1000;
+async function fetchArchiveStats() {
+    for (const base of PROVIDERS) {
+        try {
+            const res = await axios.get(new URL('/stats', base).href, {
+                timeout: 15000,
+                headers: { 'User-Agent': 'Mozilla/5.0 ZamundaStremio/1.0', 'X-Api-Key': PROXY_API_KEY },
+            });
+            const d = res.data || {};
+            if (!Number.isInteger(d.total) || d.total <= 0) throw new Error('no total in the answer');
+            store.archive = { total: d.total, zamunda: d.zamunda || 0, arena: d.arena || 0, zelka: d.zelka || 0, at: Date.now() };
+            markDirty();
+            return;
+        } catch (e) {
+            console.error(`Archive stats via ${base}:`, e.message);
+        }
+    }
 }
 
 catLoad();
 catSeedFromIndex();
 setInterval(catFlush, CATALOGUE_FLUSH_MS);
+setTimeout(fetchArchiveStats, 15000);
+setInterval(fetchArchiveStats, ARCHIVE_STATS_MS);
 
 
 function recordUpstream(ok) {
@@ -1953,25 +2037,55 @@ function buildStream(torrent, url, mode) {
 // =====================================================
 
 // Track unique user from IP or RD token
-// RD users stay keyed by token prefix so the existing set keeps counting them once. Everyone else
-// is keyed by an HMAC of their IP — the address itself is never written to disk.
+// RD users stay keyed by token prefix so the existing set keeps counting them once. TorBox users
+// are keyed by an HMAC of their token (one account = one user, on any network). Everyone else is
+// keyed by an HMAC of their IP — the address itself is never written to disk.
 function getUserId(req, config) {
     if (config?.rdtoken) return config.rdtoken.substring(0, 8);
-    const ip = req.ip || 'unknown';
-    return 'h:' + crypto.createHmac('sha256', store.userSalt).update(ip).digest('hex').substring(0, 16);
+    const hmac = v => crypto.createHmac('sha256', store.userSalt).update(v).digest('hex').substring(0, 16);
+    if (config?.tbtoken) return 'tb:' + hmac(config.tbtoken);
+    return 'h:' + hmac(req.ip || 'unknown');
 }
+// Which kind of id this is: 'p2p' is counted per IP address, so it is an approximation —
+// a phone switching networks counts twice, a household behind one router counts once.
+function userKind(id) {
+    if (id.startsWith('h:')) return 'p2p';
+    if (id.startsWith('tb:')) return 'tb';
+    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(id) || id.includes(':')) return 'p2p';   // pre-2.6.3 raw ids
+    return 'rd';
+}
+const LAST_SEEN_KEEP_DAYS = 60;
+function dayKeyAgo(days) { return new Date(Date.now() - days * 86400000).toISOString().substring(0, 10); }
 function trackUser(req, config) {
     const id = getUserId(req, config);
     sadd('users', id);
     // Distinct users per day, so a jump in requests can be told apart from a jump in people.
     const today = todayKey();
-    if (store.today.date !== today) store.today = { date: today, ids: new Set() };
+    if (store.today.date !== today) {
+        store.today = { date: today, ids: new Set() };
+        const cutoff = dayKeyAgo(LAST_SEEN_KEEP_DAYS);
+        for (const [k, d] of Object.entries(store.lastSeen)) if (d < cutoff) delete store.lastSeen[k];
+    }
     if (!store.today.ids.has(id)) {
         store.today.ids.add(id);
+        store.lastSeen[id] = today;
+        if (!store.lastSeenSince) store.lastSeenSince = today;
         const d = (store.daily[today] = store.daily[today] || { streams: 0, pageViews: 0 });
         d.users = store.today.ids.size;
         markDirty();
     }
+}
+// Distinct users active in the last `days` days (today included), split by kind.
+function activeUsers(days) {
+    const cutoff = dayKeyAgo(days - 1);
+    const out = { all: 0, rd: 0, tb: 0, p2p: 0 };
+    for (const [id, d] of Object.entries(store.lastSeen)) {
+        if (d < cutoff) continue;
+        out.all++; out[userKind(id)]++;
+    }
+    // The window reaches back before lastSeen existed — the count is a floor, not the full window.
+    out.partial = !store.lastSeenSince || store.lastSeenSince > cutoff;
+    return out;
 }
 function trackMigration(req, config) {
     const id = getUserId(req, config);
@@ -2068,7 +2182,28 @@ app.get('/stats/history', adminAuth, async (req, res) => {
 // Stats — Visual dashboard (auth required)
 app.get('/dashboard', adminAuth, async (req, res) => {
     const s = await getStats();
-    const { configPageViews: configPage, installs, streamRequests: streams, uniqueUsers: users, migratedUsers: migrated, newUsers: newU } = s;
+    const { configPageViews: configPage, streamRequests: streams } = s;
+    const act = { d1: activeUsers(1), d7: activeUsers(7), d30: activeUsers(30) };
+    const cat = catStats();
+    const newByDay = catNewByDay();
+    // Catalogue size at the end of each day = everything first seen on or before it.
+    const catDays = Object.keys(newByDay).sort();
+    const magnetsOn = date => {
+        if (!catDays.length || date < catDays[0]) return null;   // before the catalogue existed
+        let n = 0;
+        for (const d of catDays) { if (d > date) break; n += newByDay[d]; }
+        return n;
+    };
+    const sumNew = days => { let n = 0; for (let i = 0; i < days; i++) n += newByDay[dayKeyAgo(i)] || 0; return n; };
+    const fmt = n => String(Number(n) || 0).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+    const since = store.lastSeenSince ? store.lastSeenSince.substring(8, 10) + '.' + store.lastSeenSince.substring(5, 7) : '';
+    const split = a => `<div class="card-split">RD ${a.rd} · TorBox ${a.tb} · P2P ${a.p2p}</div>`;
+    const activeCard = (a, label, cls) => `<div class="card"><div class="card-value ${cls}">${fmt(a.all)}</div>`
+        + `<div class="card-label">${label}${a.partial && since ? ` <span class="dim">(since ${since})</span>` : ''}</div>${split(a)}</div>`;
+    const ar = store.archive;
+    const cov = cat.coverage;
+    const siteRow = (name, x) => `<div class="site"><span>${name}</span><span>${fmt(x.have)} / ${fmt(x.of)}</span>`
+        + `<span class="bar"><i style="width:${Math.min(x.pct || 0, 100)}%"></i></span><span class="pct">${x.pct == null ? '–' : x.pct + '%'}</span></div>`;
     const historyRaw = await hgetall('dailyStats');
     // Build history from snapshots + daily counters
     const history = [];
@@ -2128,9 +2263,18 @@ h1{font-family:'Chakra Petch',sans-serif;font-size:24px;color:var(--gold);text-a
 .t-p2p{color:var(--green)}
 .t-rd,.t-tb{color:var(--gold)}
 .t-bg{color:#ce93d8}
+.card-split{font-size:11px;color:var(--dim);margin-top:6px}
+.dim{color:var(--muted)}
+.note{font-size:11px;color:var(--muted);line-height:1.5;margin:-6px 2px 16px}
+.site{display:grid;grid-template-columns:72px 130px 1fr 48px;gap:8px;align-items:center;font-size:12px;padding:5px 0;color:var(--dim)}
+.site span:nth-child(2){text-align:right;color:var(--text);font-variant-numeric:tabular-nums}
+.bar{height:6px;background:rgba(255,255,255,0.06);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--gold);border-radius:3px}
+.pct{text-align:right;color:var(--gold);font-variant-numeric:tabular-nums}
 .refresh{display:block;margin:20px auto 0;padding:10px 24px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--dim);font-family:'Chakra Petch',sans-serif;font-size:13px;cursor:pointer;letter-spacing:0.5px}
 .refresh:hover{border-color:var(--gold);color:var(--gold)}
-@media(max-width:500px){.grid{grid-template-columns:repeat(2,1fr)}.card-value{font-size:26px}}
+.grid.four{grid-template-columns:repeat(4,1fr)}
+@media(max-width:500px){.grid,.grid.four{grid-template-columns:repeat(2,1fr)}.card-value{font-size:26px}.site{grid-template-columns:58px 108px 1fr 42px;font-size:11px}}
 </style>
 </head>
 <body>
@@ -2138,11 +2282,29 @@ h1{font-family:'Chakra Petch',sans-serif;font-size:24px;color:var(--gold);text-a
 <h1>ZAMUNDA BG</h1>
 <p class="sub">Live Dashboard — ${new Date().toISOString().substring(0,16).replace('T',' ')}</p>
 
+<div class="section-title">Users</div>
 <div class="grid">
-<div class="card"><div class="card-value">${Number(users||0)}</div><div class="card-label">Total Users</div></div>
-<div class="card"><div class="card-value green">${Number(migrated||0)}</div><div class="card-label">Migrated</div></div>
-<div class="card"><div class="card-value blue">${Number(newU||0)}</div><div class="card-label">New Users</div></div>
-<div class="card"><div class="card-value">${Number(configPage)}</div><div class="card-label">Page Views</div></div>
+${activeCard(act.d1, 'Active today', '')}
+${activeCard(act.d7, 'Active 7 days', 'green')}
+${activeCard(act.d30, 'Active 30 days', 'blue')}
+</div>
+<p class="note">RD and TorBox are counted per account. P2P is counted per IP address, so it is approximate: a phone switching networks counts twice, a household behind one router counts once.</p>
+
+<div class="section-title">Magnet catalogue</div>
+<div class="grid">
+<div class="card wide"><div class="card-value">${fmt(cat.magnets)}</div><div class="card-label">Cached magnets${cov ? ` — <span style="color:var(--gold)">${cov.all}%</span> of the archive's ${fmt(ar.total)}` : ' — archive size not known yet'}</div></div>
+<div class="card"><div class="card-value green">+${fmt(sumNew(1))}</div><div class="card-label">New today</div><div class="card-split">+${fmt(sumNew(7))} in 7 days</div></div>
+</div>
+${cov ? `<div class="card" style="text-align:left;padding:10px 16px;margin-bottom:6px">
+${siteRow('Zamunda', cov.sites.zamunda)}
+${siteRow('ArenaBG', cov.sites.arena)}
+${siteRow('Zelka', cov.sites.zelka)}
+</div>
+<p class="note" style="margin-top:4px">Magnets are cached as viewers search, so coverage grows with use. BG audio: ${fmt(cat.bgAudio)}. Archive size read ${new Date(ar.at).toISOString().substring(0, 16).replace('T', ' ')} UTC; newest archive id seen ${fmt(cat.maxArchiveId)}.</p>` : ''}
+
+<div class="section-title">Traffic</div>
+<div class="grid four">
+<div class="card"><div class="card-value">${fmt(configPage)}</div><div class="card-label">Page Views</div></div>
 <div class="card"><div class="card-value">${(Number(streams)/1000).toFixed(1)}K</div><div class="card-label">Stream Requests</div></div>
 <div class="card"><div class="card-value orange">${searches.length}</div><div class="card-label">Searches (last ${logs.length})</div></div>
 <div class="card"><div class="card-value ${misses.length > 0 ? 'orange' : 'green'}">${(misses.length/Math.max(searches.length,1)*100).toFixed(0)}%</div><div class="card-label">Miss Rate</div></div>
@@ -2177,18 +2339,14 @@ ${history.length > 0 ? `
 <div class="log-box" style="max-height:30vh">
 <table style="width:100%;border-collapse:collapse;font-size:12px">
 <tr style="color:var(--gold);text-align:left;border-bottom:1px solid var(--border)">
-<th style="padding:6px 4px">Date</th><th>Users</th><th>Active</th><th>Migrated</th><th>New</th><th>Streams</th><th>Page Views</th></tr>
-${history.map((h, i) => {
-    const prev = history[i + 1]; // sorted desc, so i+1 is previous day
-    const dMigrated = prev ? h.migrated - prev.migrated : h.migrated;
-    const dNew = prev ? h.newUsers - prev.newUsers : h.newUsers;
+<th style="padding:6px 4px">Date</th><th>Active</th><th>Streams</th><th>Page Views</th><th>Magnets</th><th>New magnets</th></tr>
+${history.map(h => {
     return '<tr style="border-bottom:1px solid rgba(255,255,255,0.03)"><td style="padding:4px;color:var(--dim)">' + h.date.substring(5) + '</td>'
-    + '<td>' + h.totalUsers + '</td>'
     + '<td>' + (h.dayUsers || '–') + '</td>'
-    + '<td style="color:var(--green)">' + (dMigrated > 0 ? '+' + dMigrated : dMigrated) + '</td>'
-    + '<td style="color:var(--blue)">' + (dNew > 0 ? '+' + dNew : dNew) + '</td>'
     + '<td style="color:var(--gold)">' + (h.dayStreams || 0) + '</td>'
-    + '<td style="color:var(--gold)">' + (h.dayViews || 0) + '</td></tr>';
+    + '<td style="color:var(--gold)">' + (h.dayViews || 0) + '</td>'
+    + '<td>' + (magnetsOn(h.date) == null ? '–' : fmt(magnetsOn(h.date))) + '</td>'
+    + '<td style="color:var(--green)">' + (magnetsOn(h.date) == null ? '–' : '+' + fmt(newByDay[h.date] || 0)) + '</td></tr>';
 }).join('')}
 </table>
 </div>` : ''}
@@ -2198,7 +2356,7 @@ ${history.map((h, i) => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.6.4</span>
+<span style="font-size:12px;color:var(--dim)">v2.6.5</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -2240,7 +2398,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.4', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.5', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -2256,6 +2414,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.6.4 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.6.5 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });

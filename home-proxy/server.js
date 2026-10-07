@@ -94,6 +94,38 @@ app.get('/', async (req, res) => {
     }
 });
 
+// Archive size, for the addon's dashboard: coverage = magnets the addon holds / this total.
+// Upstream answers {"total":448023,"zamunda":…,"arena":…,"zelka":…}. Keyed like the search.
+const STATS_UPSTREAM = process.env.STATS_UPSTREAM || UPSTREAM.replace(/\/torrents\/?$/, '/stats');
+
+app.get('/stats', async (req, res) => {
+    if (req.header('X-Api-Key') !== API_KEY) {
+        return res.status(403).type('text/plain').send('Unauthorized');
+    }
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    try {
+        const upstream = await fetch(STATS_UPSTREAM, {
+            signal: ctrl.signal,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 '
+                            + '(KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+                'Accept': 'application/json, text/plain, */*',
+            },
+        });
+        const body = await upstream.text();
+        if (!upstream.ok) {
+            return res.status(upstream.status).type('text/plain').send(`upstream ${upstream.status}`);
+        }
+        res.status(200).type('application/json').send(body);
+    } catch (e) {
+        res.status(e.name === 'AbortError' ? 504 : 502).type('text/plain')
+           .send(`upstream unreachable: ${e.message}`);
+    } finally {
+        clearTimeout(timer);
+    }
+});
+
 // Defaults to loopback so a box at home is not exposed by accident. A PaaS router has to
 // reach the process, so those deploys need HOST=0.0.0.0 — without it the platform health
 // check fails and /probe is unreachable.

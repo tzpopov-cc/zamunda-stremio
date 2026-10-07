@@ -534,18 +534,18 @@
         <h1>Zamunda BG</h1>
         <p class="subtitle" data-bg="Stremio addon за филми и сериали" data-en="Stremio addon for movies & series"></p>
         <p class="sources" style="font-size:11px; color:var(--text-muted); margin-top:6px; letter-spacing:1px;" data-bg="Zamunda · ArenaBG · Zelka" data-en="Zamunda · ArenaBG · Zelka"></p>
-        <div class="version-badge">v2.6.4</div>
+        <div class="version-badge">v2.6.5</div>
         <div class="stats-bar header-stats-bar" id="headerStatsBar">
             <div class="stat">
                 <div class="stat-value" id="statUsersHeader">—</div>
-                <div class="stat-label" data-bg="потребители" data-en="users"></div>
+                <div class="stat-label" data-bg="потребители на ден" data-en="users a day"></div>
             </div>
             <div class="stat">
                 <div class="stat-value" id="statStreamsHeader">—</div>
                 <div class="stat-label" data-bg="търсения" data-en="searches"></div>
             </div>
             <div class="stat">
-                <div class="stat-value">450K+</div>
+                <div class="stat-value" id="statTorrentsHeader">—</div>
                 <div class="stat-label" data-bg="торенти" data-en="torrents"></div>
             </div>
         </div>
@@ -693,14 +693,14 @@
             <div class="stats-bar" id="statsBar">
                 <div class="stat">
                     <div class="stat-value" id="statUsers">—</div>
-                    <div class="stat-label" data-bg="потребители" data-en="users"></div>
+                    <div class="stat-label" data-bg="потребители на ден" data-en="users a day"></div>
                 </div>
                 <div class="stat">
                     <div class="stat-value" id="statStreams">—</div>
                     <div class="stat-label" data-bg="търсения" data-en="searches"></div>
                 </div>
                 <div class="stat">
-                    <div class="stat-value">450K+</div>
+                    <div class="stat-value" id="statTorrents">—</div>
                     <div class="stat-label" data-bg="торенти" data-en="torrents"></div>
                 </div>
             </div>
@@ -1227,10 +1227,15 @@ function roundDown(n) {
 fetch('/stats')
     .then(r => r.json())
     .then(s => {
-        document.getElementById('statUsers').textContent = roundDown(s.uniqueUsers) + '+';
-        document.getElementById('statStreams').textContent = roundDown(s.streamRequests) + '+';
-        document.getElementById('statUsersHeader').textContent = roundDown(s.uniqueUsers) + '+';
-        document.getElementById('statStreamsHeader').textContent = roundDown(s.streamRequests) + '+';
+        // Every number is rounded DOWN, so "N+" is always true. Users = distinct users a day
+        // (see usersPerDay on the server), not the all-time id count, which is not a headcount.
+        const show = (id, n) => { if (n) document.getElementById(id).textContent = roundDown(n) + '+'; };
+        show('statUsers', s.usersPerDay);
+        show('statUsersHeader', s.usersPerDay);
+        show('statStreams', s.streamRequests);
+        show('statStreamsHeader', s.streamRequests);
+        show('statTorrents', s.archiveTorrents);
+        show('statTorrentsHeader', s.archiveTorrents);
         // Only 'down' shows the notice — 'unknown' (a quiet period) must stay silent.
         if (s.sourceStatus === 'down') document.getElementById('sourceAlert').classList.add('show');
     })

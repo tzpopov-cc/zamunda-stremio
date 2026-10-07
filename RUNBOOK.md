@@ -96,13 +96,35 @@ position in the WHOLE torrent (subtitles and .nfo included), which is what Strem
 server expects as `fileIdx`. It is a cache, not data to protect: delete it and it rebuilds on demand.
 
 Rollback: the server keeps `server.js.bak-<version>-predeploy` + `config.html.bak-<version>-predeploy`
-for every deploy (2.6.2 and 2.6.3 are there) — copy a pair back and `docker compose up -d --build`.
+for every deploy (2.6.2, 2.6.3 and 2.6.4 are there) — copy a pair back and `docker compose up -d --build`.
 
 ### zamunda.life reads only the first five words of a query
 
 Everything after the fifth word is ignored (proved 2026-10-07). Long titles therefore get a shortened
 twin query next to the original (`shortenQuery` — stopwords out, year/S01E05 kept). If a long title
 comes back "not in the archive" while a short search on the site finds it, this is the place to look.
+
+### Dashboard numbers (since v2.6.5)
+
+**Users.** "Active today / 7 days / 30 days" come from `lastSeen` in `stats.json` (user id → last
+active day, pruned after 60 days). RD users are keyed by token prefix and TorBox users by an HMAC of
+their token, so both are one per account. P2P users are keyed by an HMAC of their IP: approximate (a
+phone switching networks counts twice, a household behind one router counts once). `lastSeen` starts
+2026-10-07, so the 7- and 30-day cards say "(since 07.10)" until their window is full.
+The old all-time `uniqueUsers` (still on `/stats`, no longer shown anywhere) mixes RD accounts
+collected since launch with P2P IPs counted only since v2.6.3 — do not read it as growth.
+
+**Landing page numbers must be true.** Each is rounded DOWN so "N+" holds: users = `usersPerDay`
+(average distinct users over the last 7 complete days, today so far until one exists — within a day
+an IP rarely changes, so this is the least inflated count), searches = `streamRequests`, torrents =
+the archive's live total (was a hardcoded "450K+" while the archive holds 448 023).
+
+**Magnet coverage.** Catalogue size divided by the archive's own size. The archive publishes it at
+`https://zamunda.life/api/stats` (`{"total":448023,"zamunda":396421,"arena":42989,"zelka":8613}` on
+2026-10-07); the addon reads it every 6 h through the proxy's keyed `/stats` route and keeps the last
+good answer in `stats.json` (`archive`). Catalogue `src` maps `z`→zamunda, `arenabg`→arena,
+`zelka`→zelka. New magnets per day are computed from each record's first-seen time, so the daily table
+needs no stored history. `/catalogue/stats` returns the same `archive` and `coverage` as JSON.
 
 
 ### Egress proxy (Oracle)
@@ -117,6 +139,9 @@ sudo systemctl restart zamunda-proxy
 Layout: app `/opt/zamunda-proxy` (root-owned) · env `/etc/zamunda-proxy.env` (root:zproxy 0640) ·
 unit `/etc/systemd/system/zamunda-proxy.service` · runs as **`zproxy`** (system account, no shell, no
 home, no sudo) · port 7011. A pre-hardening copy of the unit is at `/root/zamunda-proxy.service.bak`.
+Routes: `/` (search, keyed), `/stats` (archive size, keyed, since 2026-10-07), `/health`, `/probe`.
+The repo copy is `home-proxy/server.js`; the version before `/stats` is on the box as
+`/opt/zamunda-proxy/server.js.bak-2026-10-07-prestats`.
 
 The unit is sandboxed (`ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `NoNewPrivileges`, empty
 `CapabilityBoundingSet`, `SystemCallFilter=@system-service`, …). If you add a feature that needs to
