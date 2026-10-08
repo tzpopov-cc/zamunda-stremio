@@ -96,7 +96,7 @@ position in the WHOLE torrent (subtitles and .nfo included), which is what Strem
 server expects as `fileIdx`. It is a cache, not data to protect: delete it and it rebuilds on demand.
 
 Rollback: the server keeps `server.js.bak-<version>-predeploy` + `config.html.bak-<version>-predeploy`
-for every deploy (2.6.2, 2.6.3 and 2.6.4 are there) — copy a pair back and `docker compose up -d --build`.
+for every deploy (2.6.2 – 2.6.5 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
 
 ### zamunda.life reads only the first five words of a query
 
@@ -114,10 +114,19 @@ phone switching networks counts twice, a household behind one router counts once
 The old all-time `uniqueUsers` (still on `/stats`, no longer shown anywhere) mixes RD accounts
 collected since launch with P2P IPs counted only since v2.6.3 — do not read it as growth.
 
-**Landing page numbers must be true.** Each is rounded DOWN so "N+" holds: users = `usersPerDay`
-(average distinct users over the last 7 complete days, today so far until one exists — within a day
-an IP rarely changes, so this is the least inflated count), searches = `streamRequests`, torrents =
-the archive's live total (was a hardcoded "450K+" while the archive holds 448 023).
+**Landing page numbers must be true.** Each is rounded DOWN so "N+" holds: users = `totalUsers`,
+searches = `streamRequests`, torrents = the archive's live total (was a hardcoded "450K+" while the
+archive holds 448 023).
+
+**`totalUsers` (since v2.6.6) is a floor, never inflated.** The raw all-time id set cannot be trusted:
+every new IP of a P2P user is a new id. Counted instead: every RD account (well-formed 8-char token
+prefix) + every TorBox account (`tb:`) + every P2P install id (`u:`) + for older P2P installs without
+an id, the most distinct IPs seen on one day in the last 30 (`daily[d].byKind.ip`). The result is
+never below the busiest single day of the last 30. **Install id:** the config page puts
+`uid=<12 random chars>` in the addon link, kept in the browser's localStorage so reconfiguring does not
+make a second user. Stremio syncs the link to every device of the account, so one id = one Stremio
+account. Installs made before v2.6.6 carry no id until they reinstall — the "older P2P" part shrinks
+as they do. A shared link counts as one user (errs low).
 
 **Magnet coverage.** Catalogue size divided by the archive's own size. The archive publishes it at
 `https://zamunda.life/api/stats` (`{"total":448023,"zamunda":396421,"arena":42989,"zelka":8613}` on
@@ -126,6 +135,30 @@ good answer in `stats.json` (`archive`). Catalogue `src` maps `z`→zamunda, `ar
 `zelka`→zelka. New magnets per day are computed from each record's first-seen time, so the daily table
 needs no stored history. `/catalogue/stats` returns the same `archive` and `coverage` as JSON.
 
+
+### Series matching (v2.6.6)
+
+`matchesSeriesTitle` → `matchesEpisode` → plain-name preference → bare fallback. The rules, each
+from a real wrong stream:
+- **Different show after the name** (`namesAnotherShow`): words between the show name and the
+  season/year/quality marker that are not edition/language tags make it another show —
+  "Vikings.Valhalla", "Vikings.Rise.And.Fall", "Naruto.Shippuden", "Law.and.Order.SVU",
+  "Dexter.New.Blood". Neutral: tags (`SHOW_NAME_TAGS`), Cyrillic words, single letters ("House.M.D."),
+  bracketed text. A bundle listing the show on its own is kept ("Naruto + … Collection",
+  "Bron-Broen AKA The Bridge").
+- **Words before the name** ("Fuller.House", "Fear.the.Walking.Dead"): kept only when nothing for
+  that episode carries the plain name — "Special.Ops.Lioness" is the only form Lioness has.
+- **Declared seasons** (`declaredSeasons`): "S3", "Season.01", "3rd Season", season ranges and anime
+  "Title 3 - 25". A release naming only other seasons is not a match; for the right season the episode
+  part after it decides (`episodeSpan`). Before this, "Kuroko's Basketball 3 - 25" was read as episodes
+  3–25 and "2 - 01-25" matched every season.
+- **Bare fallback** (no season anywhere) only for shows whose releases carry no seasons at all, and only
+  for releases named exactly as the show with no episode number after the name. Otherwise the viewer
+  gets "Няма сезон N" instead of a film or a season-1 pack.
+- Known gap: an absolute anime number ("Kuroko's Basketball 3 - 72" = S3E22) is not mapped.
+
+Test method: `old` vs `new` over 331 real ids (300 from the logs + 31 targeted) with the caching stub;
+v2.6.6 lost no correct stream, the 30 titles only the old version served were all wrong releases.
 
 ### Egress proxy (Oracle)
 

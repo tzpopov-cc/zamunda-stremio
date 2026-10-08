@@ -100,6 +100,12 @@ function loadStore() {
             store.lastSeenSince = store.today.date;
             for (const id of store.today.ids) store.lastSeen[id] = store.today.date;
         }
+        // First boot with per-kind daily counts (v2.6.6): today's are rebuilt from today's ids.
+        const td = store.today.date && store.daily[store.today.date];
+        if (td && !td.byKind) {
+            td.byKind = {};
+            for (const id of store.today.ids) { const c = idClass(id); td.byKind[c] = (td.byKind[c] || 0) + 1; }
+        }
         console.log(`💾 Stats loaded: ${store.users.size} users, ${store.counters.streams} streams, ${store.logs.length} logs`);
     } catch (e) {
         console.log(`💾 No stats file at ${STATS_FILE} (${e.code || e.message}) — starting fresh`);
@@ -184,8 +190,37 @@ function getStats() {
         migratedUsers: store.migratedUsers.size,
         newUsers: store.newUsers.size,
         usersPerDay: usersPerDay(),
+        totalUsers: totalUsers().all,
         archiveTorrents: store.archive ? store.archive.total : null,
     };
+}
+
+// A total that can be trusted. The raw all-time set cannot: every new IP of a P2P user is a new id,
+// so it grows with time even if nobody new arrives. Counted instead:
+//   - every RD and TorBox account that has ever used the addon (one token = one account),
+//   - every P2P install id (one Stremio account, synced across its devices),
+//   - P2P users without an install id (installed before v2.6.6): the most distinct IPs seen on a
+//     single day in the last 30 days. Within one day an IP rarely changes, so this is close to a
+//     headcount of them, and it is a floor — anyone who did not come on that day is not in it.
+// Malformed or pre-2.6.3 raw ids count nowhere. The result errs low, never high — and is never
+// below the busiest single day of the last 30, which is a floor of its own.
+function totalUsers() {
+    const out = { rd: 0, tb: 0, inst: 0, ipPeak: 0, ipPeakDay: '' };
+    for (const id of store.users) {
+        const c = idClass(id);
+        if (c === 'rd' || c === 'tb' || c === 'inst') out[c]++;
+    }
+    for (let i = 0; i < 30; i++) {
+        const day = dayKeyAgo(i);
+        const n = store.daily[day]?.byKind?.ip || 0;
+        if (n > out.ipPeak) { out.ipPeak = n; out.ipPeakDay = day; }
+    }
+    // Any single day's distinct users is a floor too. It covers the days before the split by kind
+    // existed (v2.6.6), when the sum above still knows little about P2P users.
+    out.dayPeak = 0;
+    for (let i = 0; i < 30; i++) out.dayPeak = Math.max(out.dayPeak, getDailyCount(dayKeyAgo(i), 'users'));
+    out.all = Math.max(out.rd + out.tb + out.inst + out.ipPeak, out.dayPeak);
+    return out;
 }
 
 // The landing page's user number. The all-time set is not a headcount (RD accounts since launch
@@ -276,7 +311,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.6.5',
+        version: '2.6.6',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -920,6 +955,39 @@ function detectExtras(torrent) {
     return legacy;
 }
 
+// Seasons a release names without an SxxEyy, each with the text after it (empty for a range,
+// which is a pack of all its seasons). `t` is upper-cased. "S03E05" is not here — an exact
+// episode is matched before this is consulted.
+function declaredSeasons(t) {
+    const out = [];
+    const add = (m, n) => out.push({ season: parseInt(n), rest: t.slice(m.index + m[0].length) });
+    for (const m of t.matchAll(/(?<![-–]\s*)\bS(\d{1,2})(?![\dE])(?![-–]S?\d)(?!\s*[-–]\s*S\d)/g)) add(m, m[1]);
+    // Season ranges are packs of every season in them: "S01-S07", "S01-07", "S01 - S06", "Seasons 1-5".
+    for (const m of t.matchAll(/\bS(\d{1,2})(?:[-–]S?|\s*[-–]\s*S)(\d{1,2})(?!\d|E)|SEASONS?[\s._]*(\d{1,2})\s*[-–]\s*(\d{1,2})(?!\d)/g)) {
+        const from = parseInt(m[1] || m[3]), to = parseInt(m[2] || m[4]);
+        for (let n = from; n <= to && to - from < 50; n++) out.push({ season: n, rest: '' });
+    }
+    for (const m of t.matchAll(/(?:SEASON|СЕЗОН)[\s._]*(\d{1,2})(?!\d)(?![-–]\d)/g)) add(m, m[1]);
+    for (const m of t.matchAll(/\b(\d{1,2})(?:ST|ND|RD|TH)[\s._]*SEASON\b/g)) add(m, m[1]);
+    // Anime: a bare season number right after the title, then " - " and the episode part
+    // ("Kuroko's Basketball 3 - 25"). It must follow a word, not a dash (so it is not the end of
+    // a range) and have no leading zero — episode numbers do, so "01 - 12" stays a range.
+    for (const m of t.matchAll(/(?<=[A-Z'\])]\s)([1-9]\d?)(?=\s+-\s+\d)/g)) add(m, m[1]);
+    return out;
+}
+
+// The episode or episode range at the start of `rest`: " - 25" → [25, 25], " 19 - 23" → [19, 23],
+// " - 01-25" → [1, 25], ".E01-E10" → [1, 10]. Null when no episode follows ("S01.720p", "S3.2015",
+// "S01 Complete") — the release is then a season pack.
+function episodeSpan(rest) {
+    // Not followed by P/I (720p, 1080i), X (720x400), B (10bit), K (4K), C (2ch), G/M (GB, MB) or a digit.
+    const m = rest.match(/^[\s._-]*(?:EP?)?[\s.]*0*(\d{1,3})(?![\dPIXBKCGM])(?:\s*[-–~&]\s*(?:EP?)?0*(\d{1,3})(?![\dPIXBKCGM]))?/);
+    if (!m) return null;
+    const a = parseInt(m[1]);
+    const b = m[2] ? parseInt(m[2]) : a;
+    return b >= a ? [a, b] : [a, a];
+}
+
 function matchesEpisode(title, season, episode) {
     const t = title.toUpperCase();
     const s = String(season).padStart(2, '0');
@@ -934,6 +1002,23 @@ function matchesEpisode(title, season, episode) {
         new RegExp(`\\b${sInt}X${e}\\b`),
         new RegExp(`SEASON[\\s._]*${sInt}[\\s._]*EPISODE[\\s._]*${eInt}\\b`),
     ].some(p => p.test(t))) return 'episode';
+
+    // 1b. The release states its season some other way — "Kuroko's Basketball 3 - 25" (season 3,
+    // episode 25), "Kuroko's Basketball S3 19 - 23", "… 2 - 01-25", "Show.S3.2015". The rules
+    // below cannot see a season there: "3 - 25" was read as episodes 3 to 25 (so S3E5 was offered
+    // episode 25) and "2 - 01-25" as a range valid for EVERY season. So: a release that names only
+    // other seasons is not this one, and for this season the episode part after it decides.
+    const declared = declaredSeasons(t);
+    if (declared.length) {
+        const mine = declared.filter(d => d.season === sInt);
+        if (!mine.length) return null;
+        for (const d of mine) {
+            const span = episodeSpan(d.rest);
+            if (!span) return 'season';
+            if (eInt >= span[0] && eInt <= span[1]) return 'episode';
+        }
+        return null;
+    }
 
     // 2. Anime absolute episode: "- 137", "- 07 [720p]", "EP02" (no season prefix)
     if (sInt === 1) {
@@ -1506,8 +1591,105 @@ function nameTokens(name) {
 
 function matchesSeriesTitle(title, name, bgName) {
     const words = new Set(normalizeTitle(title).split(' ').filter(Boolean));
-    const allPresent = toks => toks.length > 0 && toks.every(t => words.has(t));
-    return allPresent(nameTokens(name)) || (!!bgName && allPresent(nameTokens(bgName)));
+    const onShow = toks => toks.length > 0 && toks.every(t => words.has(t)) && !namesAnotherShow(title, toks);
+    return onShow(nameTokens(name)) || (!!bgName && onShow(nameTokens(bgName)));
+}
+
+// Words a release may put between the show name and the season/episode marker without naming a
+// different show: edition and language tags ("Vikings.Complete.S01-S06", "Shameless.US.S01",
+// "Vikings.BG.Audio.S03", "Money.Heist.Part.1").
+const SHOW_NAME_TAGS = new Set(['complete', 'extended', 'uncut', 'unrated', 'remastered', 'directors', 'cut',
+    'repack', 'proper', 'us', 'uk', 'au', 'nz', 'ca', 'bg', 'bgaudio', 'audio', 'dual', 'dualaudio', 'multi',
+    'sub', 'subs', 'subbed', 'bgsub', 'bgsubs', 'dub', 'dubbed', 'integrale', 'collection', 'box', 'set',
+    'boxset', 'full', 'series', 'all', 'seasons', 'part', 'vol', 'volume', 'the', 'a', 'an', 'and', 'tv',
+    'mkv', 'mp4', 'avi', 'mpg', 'wmv', 'm4v', 'mov', 'webm', 'rar', 'zip', 'iso']);
+
+// Where the show-name part of a release ends: a season/episode marker ("s01", "s01e05", "s01ep05",
+// "1x05", "e05", "season", "сезон"), a bare number (year, anime season, episode) or a quality tag.
+function endsShowName(tok) {
+    return /^\d+$/.test(tok) || /^s\d{1,2}(?:\D|$)/.test(tok) || /^\d{1,2}x\d+$/.test(tok)
+        || /^ep?\d+$/.test(tok) || /^\d{3,4}[pi]$/.test(tok) || /^(season|seasons|сезон|сезони)\d*$/.test(tok)
+        || QUALITY_TOKEN.test(tok);
+}
+
+// The show-name part of a release, as normalised words: what comes before the first marker, with
+// bracketed tags dropped ("[EasternSpirit]", "[c]", "(US)").
+function showNameHead(title) {
+    const head = [];
+    for (const tok of normalizeTitle(title.replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')).split(' ')) {
+        if (!tok) continue;
+        if (endsShowName(tok)) break;
+        head.push(tok);
+    }
+    return head;
+}
+
+// Words that never make a release a different show: edition/language tags, Cyrillic (a Bulgarian
+// title next to the English one) and single letters ("House.M.D." is House).
+function neutralWord(w) {
+    return SHOW_NAME_TAGS.has(w) || w.length === 1 || /\p{Script=Cyrillic}/u.test(w);
+}
+
+// True when the release is a DIFFERENT show whose name merely starts with this one's: for
+// "Vikings", "Vikings.Valhalla.S01" and "Vikings.Rise.And.Fall.S01E01" (both came back for
+// Vikings S1E1); "Naruto.Shippuden" for Naruto; "Law.and.Order.SVU" for Law & Order. Only words
+// AFTER the name count — words before it stay allowed, because releases prepend a franchise or a
+// group tag ("Special.Ops.Lioness", "[EasternSpirit] Kuroko's Basketball"). Cyrillic words are
+// let through too: a Bulgarian title next to the English one is not another show.
+function namesAnotherShow(title, toks) {
+    // A bundle that lists this show on its own is not another show:
+    // "Naruto + Naruto Shippuden & Boruto Ultimate Collection", "Викингите / Vikings".
+    const parts = title.split(/\s[+&\/|]\s|,\s*|\baka\b/i);
+    if (parts.length > 1 && parts.some(p => isJustTheName(showNameHead(p), toks))) return false;
+    const head = showNameHead(title);
+    let end = -1;
+    for (const t of toks) {
+        const i = head.indexOf(t);
+        if (i < 0) return false;   // the name is not in the title part — cannot judge, keep it
+        end = Math.max(end, i);
+    }
+    return head.slice(end + 1).some(w => !neutralWord(w));
+}
+
+// Words before the show name in a release's name part: "fuller" in "Fuller.House.S01" for House,
+// "tales of" in "Tales.of.the.Walking.Dead". Empty when the name leads or is not in the name part.
+// "Bron-Broen AKA The Bridge" carries two names; the one after AKA has nothing before it.
+function namePrefix(title, toks) {
+    let best = null;
+    for (const alt of title.split(/\baka\b/i)) {
+        const head = showNameHead(alt);
+        const idx = toks.map(t => head.indexOf(t));
+        if (!toks.length || idx.some(i => i < 0)) continue;
+        const pre = head.slice(0, Math.min(...idx)).filter(w => !neutralWord(w));
+        if (!best || pre.length < best.length) best = pre;
+    }
+    return best || [];
+}
+
+// The head is the show name and nothing else but neutral words — no prefix, no suffix.
+function isJustTheName(head, toks) {
+    return toks.length > 0 && head.length > 0
+        && toks.every(t => head.includes(t)) && head.every(w => toks.includes(w) || neutralWord(w));
+}
+
+// Whether a release states a season or an episode at all.
+function hasSeasonInfo(title) {
+    const u = title.toUpperCase();
+    return declaredSeasons(u).length > 0 || /S\d{1,2}E\d{1,3}/.test(u) || /\b\d{1,2}X\d{2,3}\b/.test(u);
+}
+
+// For the "no season or episode anywhere" fallback: a release named exactly as the show
+// ("Johnny.Bravo.Complete", "The.Lord.of.the.Rings.The.Rings.of.Power.1080p"), with no number that
+// could be an episode. Not "My.Sweet.Monster.2021" for "Monster", not "Naruto - 006" (an episode
+// whose season is not stated), not "Attack.on.Titan.Part.2.2015".
+function isBareShowPack(title, name, bgName) {
+    const clean = title.replace(/\[[^\]]*\]|\([^)]*\)/g, ' ');
+    if (declaredSeasons(clean.toUpperCase()).length) return false;
+    const head = showNameHead(clean);
+    // The word the name stops at: a number there that is not a year is an episode or a part.
+    const stop = normalizeTitle(clean).split(' ').filter(Boolean)[head.length] || '';
+    if (/^\d{1,4}$/.test(stop) && !/^(19|20)\d{2}$/.test(stop)) return false;
+    return isJustTheName(head, nameTokens(name)) || (!!bgName && isJustTheName(head, nameTokens(bgName)));
 }
 
 function matchesMovie(title, name, year, bgName) {
@@ -1655,13 +1837,27 @@ async function resolveStreams(type, fullId, config) {
         console.log(`  ${matched.length} match S${season}E${episode}`);
 
         if (matched.length > 0) {
-            allTorrents = matched;
+            // Words before the name usually mean another show ("Fuller.House" for House,
+            // "Tales.of.the.Walking.Dead") but sometimes the same one under a longer title
+            // ("Special.Ops.Lioness" for Lioness). So they stay only when nothing for this
+            // episode carries the name plainly.
+            const toks = nameTokens(meta.name);
+            const plain = matched.filter(t => namePrefix(t.title, toks).length === 0);
+            if (plain.length && plain.length < matched.length) {
+                console.log(`  ${matched.length - plain.length} dropped: other words before the show name`);
+            }
+            allTorrents = plain.length ? plain : matched;
         } else {
             // Fallback: show torrents with no season/episode info at all (bare title packs)
             // e.g. "Johnny Bravo" — likely a complete pack the user can pick from
-            const fallback = allTorrents.filter(t => {
+            // Only for a show whose releases carry no seasons at all. If some do and none is the
+            // one asked for, the season is most likely absent, and a bare-named release is season
+            // 1 or a film ("Attack.On.Titan.2015" for Attack on Titan S3) — say it is absent instead.
+            const showHasSeasons = allTorrents.some(t => hasSeasonInfo(t.title));
+            const fallback = showHasSeasons ? [] : allTorrents.filter(t => {
                 const u = t.title.toUpperCase();
-                return !/S\d|SEASON\s*\d|SERIES\s*\d|СЕЗОН|E\d|EP\d|\d+[-–~]\d+/.test(u);
+                return !/S\d|SEASON\s*\d|SERIES\s*\d|СЕЗОН|E\d|EP\d|\d+[-–~]\d+/.test(u)
+                    && isBareShowPack(t.title, meta.name, meta.bulgarian_name);
             }).map(t => ({ ...t, _matchType: 'fallback' }));
 
             if (fallback.length > 0) {
@@ -1675,6 +1871,7 @@ async function resolveStreams(type, fullId, config) {
                     const u = t.title.toUpperCase();
                     const sm = u.match(/S(\d+)/g);
                     if (sm) sm.forEach(s => seasons.add(parseInt(s.slice(1))));
+                    declaredSeasons(u).forEach(d => seasons.add(d.season));   // "Season 4 Part 1", "Kuroko's Basketball 3 - 25"
                     const em = u.match(/S\d+E(\d+)/g);
                     if (em) em.forEach(e => episodes.add(parseInt(e.match(/E(\d+)/)[1])));
                 });
@@ -2038,21 +2235,35 @@ function buildStream(torrent, url, mode) {
 
 // Track unique user from IP or RD token
 // RD users stay keyed by token prefix so the existing set keeps counting them once. TorBox users
-// are keyed by an HMAC of their token (one account = one user, on any network). Everyone else is
-// keyed by an HMAC of their IP — the address itself is never written to disk.
+// are keyed by an HMAC of their token (one account = one user, on any network). P2P users who
+// installed from the page since v2.6.6 carry a random install id in their addon link (`uid`), and
+// Stremio syncs that link to every device of the account, so one id = one Stremio account. Older
+// P2P installs have no id and are keyed by an HMAC of their IP — the address is never written.
+const INSTALL_ID = /^[a-z0-9]{10,16}$/;
 function getUserId(req, config) {
     if (config?.rdtoken) return config.rdtoken.substring(0, 8);
     const hmac = v => crypto.createHmac('sha256', store.userSalt).update(v).digest('hex').substring(0, 16);
     if (config?.tbtoken) return 'tb:' + hmac(config.tbtoken);
+    if (INSTALL_ID.test(config?.uid || '')) return 'u:' + config.uid;
     return 'h:' + hmac(req.ip || 'unknown');
 }
-// Which kind of id this is: 'p2p' is counted per IP address, so it is an approximation —
-// a phone switching networks counts twice, a household behind one router counts once.
-function userKind(id) {
-    if (id.startsWith('h:')) return 'p2p';
+// How an id was made: 'rd' (RD token prefix), 'tb' (TorBox token), 'inst' (install id), 'ip' (P2P by
+// IP — approximate: a phone switching networks counts twice, a household behind one router once),
+// 'other' (pre-2.6.3 raw ids and malformed tokens — counted nowhere that claims to be exact).
+function idClass(id) {
+    if (id.startsWith('h:')) return 'ip';
     if (id.startsWith('tb:')) return 'tb';
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(id) || id.includes(':')) return 'p2p';   // pre-2.6.3 raw ids
-    return 'rd';
+    if (id.startsWith('u:')) return 'inst';
+    if (/^[A-Z0-9]{8}$/.test(id)) return 'rd';
+    return 'other';
+}
+// The three groups the dashboard splits users into. An 'other' id is an RD token prefix of an odd
+// shape unless it is a pre-2.6.3 raw IP.
+function userKind(id) {
+    const c = idClass(id);
+    if (c === 'rd' || c === 'tb') return c;
+    if (c === 'other' && !/^[\d.]+$|:/.test(id)) return 'rd';
+    return 'p2p';
 }
 const LAST_SEEN_KEEP_DAYS = 60;
 function dayKeyAgo(days) { return new Date(Date.now() - days * 86400000).toISOString().substring(0, 10); }
@@ -2072,6 +2283,9 @@ function trackUser(req, config) {
         if (!store.lastSeenSince) store.lastSeenSince = today;
         const d = (store.daily[today] = store.daily[today] || { streams: 0, pageViews: 0 });
         d.users = store.today.ids.size;
+        const c = idClass(id);
+        d.byKind = d.byKind || {};
+        d.byKind[c] = (d.byKind[c] || 0) + 1;
         markDirty();
     }
 }
@@ -2184,6 +2398,7 @@ app.get('/dashboard', adminAuth, async (req, res) => {
     const s = await getStats();
     const { configPageViews: configPage, streamRequests: streams } = s;
     const act = { d1: activeUsers(1), d7: activeUsers(7), d30: activeUsers(30) };
+    const tot = totalUsers();
     const cat = catStats();
     const newByDay = catNewByDay();
     // Catalogue size at the end of each day = everything first seen on or before it.
@@ -2284,11 +2499,16 @@ h1{font-family:'Chakra Petch',sans-serif;font-size:24px;color:var(--gold);text-a
 
 <div class="section-title">Users</div>
 <div class="grid">
+<div class="card wide"><div class="card-value">${fmt(tot.all)}</div><div class="card-label">Total users — a floor, never inflated</div>
+<div class="card-split">RD accounts ${fmt(tot.rd)} · TorBox accounts ${fmt(tot.tb)} · P2P installs ${fmt(tot.inst)} · older P2P installs ${fmt(tot.ipPeak)}${tot.ipPeakDay ? ` <span class="dim">(busiest day ${tot.ipPeakDay.substring(8, 10)}.${tot.ipPeakDay.substring(5, 7)})</span>` : ''}${tot.dayPeak > tot.rd + tot.tb + tot.inst + tot.ipPeak ? `<br>the busiest single day had more (${fmt(tot.dayPeak)}), so that is the total` : ''}</div></div>
+<div class="card"><div class="card-value">${fmt(s.usersPerDay)}</div><div class="card-label">Users a day</div><div class="card-split">average of the last 7 full days</div></div>
+</div>
+<div class="grid">
 ${activeCard(act.d1, 'Active today', '')}
 ${activeCard(act.d7, 'Active 7 days', 'green')}
 ${activeCard(act.d30, 'Active 30 days', 'blue')}
 </div>
-<p class="note">RD and TorBox are counted per account. P2P is counted per IP address, so it is approximate: a phone switching networks counts twice, a household behind one router counts once.</p>
+<p class="note">RD and TorBox are counted per account, P2P installs made since v2.6.6 per install id (one Stremio account, all its devices). Older P2P installs have no id and are counted per IP address — approximate: a phone switching networks counts twice, a household behind one router once — so the total takes only their busiest single day of the last 30.</p>
 
 <div class="section-title">Magnet catalogue</div>
 <div class="grid">
@@ -2356,7 +2576,7 @@ ${history.map(h => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.6.5</span>
+<span style="font-size:12px;color:var(--dim)">v2.6.6</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -2398,7 +2618,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.5', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.6', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -2414,6 +2634,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.6.5 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.6.6 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });

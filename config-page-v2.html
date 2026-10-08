@@ -534,11 +534,11 @@
         <h1>Zamunda BG</h1>
         <p class="subtitle" data-bg="Stremio addon за филми и сериали" data-en="Stremio addon for movies & series"></p>
         <p class="sources" style="font-size:11px; color:var(--text-muted); margin-top:6px; letter-spacing:1px;" data-bg="Zamunda · ArenaBG · Zelka" data-en="Zamunda · ArenaBG · Zelka"></p>
-        <div class="version-badge">v2.6.5</div>
+        <div class="version-badge">v2.6.6</div>
         <div class="stats-bar header-stats-bar" id="headerStatsBar">
             <div class="stat">
                 <div class="stat-value" id="statUsersHeader">—</div>
-                <div class="stat-label" data-bg="потребители на ден" data-en="users a day"></div>
+                <div class="stat-label" data-bg="потребители" data-en="users"></div>
             </div>
             <div class="stat">
                 <div class="stat-value" id="statStreamsHeader">—</div>
@@ -693,7 +693,7 @@
             <div class="stats-bar" id="statsBar">
                 <div class="stat">
                     <div class="stat-value" id="statUsers">—</div>
-                    <div class="stat-label" data-bg="потребители на ден" data-en="users a day"></div>
+                    <div class="stat-label" data-bg="потребители" data-en="users"></div>
                 </div>
                 <div class="stat">
                     <div class="stat-value" id="statStreams">—</div>
@@ -758,6 +758,21 @@
     <!-- TAB: Changelog                      -->
     <!-- ═══════════════════════════════════ -->
     <div class="tab-content" id="tab-changelog">
+
+        <div class="changelog-entry">
+            <div class="changelog-header">
+                <span class="changelog-version">v2.6.6</span>
+                <span class="changelog-tag tag-fix" data-bg="ПОПРАВКА" data-en="FIX">ПОПРАВКА</span>
+                <span class="changelog-date">2026-10-08</span>
+            </div>
+            <div class="changelog-body">
+                <ul>
+                    <li data-bg="Сериалите вече не показват торенти от сродни сериали със същото начало на името: „Викингите“ без „Викингите: Валхала“, „Наруто“ без „Наруто Шипуден“, „Закон и ред“ без „Закон и ред: Специални разследвания“." data-en="Series no longer show torrents of related shows that share the start of the name: “Vikings” without “Vikings: Valhalla”, “Naruto” without “Naruto Shippuden”, “Law &amp; Order” without “Law &amp; Order: SVU”."></li>
+                    <li data-bg="Аниме, номерирано по сезони („Kuroko's Basketball 3 - 25“), вече пуска точния епизод от точния сезон, а не друг епизод или друг сезон." data-en="Anime numbered by season (“Kuroko's Basketball 3 - 25”) now plays the right episode of the right season, not another episode or season."></li>
+                    <li data-bg="Броят потребители на страницата вече е истински: всеки акаунт и всяка инсталация се броят веднъж." data-en="The user count on this page is now real: every account and every install is counted once."></li>
+                </ul>
+            </div>
+        </div>
 
         <div class="changelog-entry">
             <div class="changelog-header">
@@ -1156,6 +1171,21 @@ function getSelected(groupId) {
     return Array.from(document.querySelectorAll('#' + groupId + ' .chip.on')).map(c => c.dataset.value);
 }
 
+// A random install id in the addon link lets the server count P2P users per Stremio account
+// instead of per IP address. It names nothing and nobody; the same browser reuses it, so
+// reconfiguring does not make a second user.
+function installId() {
+    let id = '';
+    try { id = localStorage.getItem('zbgInstallId') || ''; } catch (e) {}
+    if (!/^[a-z0-9]{12}$/.test(id)) {
+        const a = new Uint8Array(12);
+        crypto.getRandomValues(a);
+        id = Array.from(a, b => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
+        try { localStorage.setItem('zbgInstallId', id); } catch (e) {}
+    }
+    return id;
+}
+
 function buildConfigString() {
     const parts = [];
     const debrid = document.querySelector('input[name="debrid"]:checked').value;
@@ -1181,6 +1211,7 @@ function buildConfigString() {
     const sizeLimit = document.getElementById('sizeLimit').value.trim();
     if (sizeLimit) parts.push('sizelimit=' + sizeLimit);
     parts.push('lang=' + currentLang);
+    parts.push('uid=' + installId());
     return parts.join('|');
 }
 
@@ -1227,11 +1258,12 @@ function roundDown(n) {
 fetch('/stats')
     .then(r => r.json())
     .then(s => {
-        // Every number is rounded DOWN, so "N+" is always true. Users = distinct users a day
-        // (see usersPerDay on the server), not the all-time id count, which is not a headcount.
+        // Every number is rounded DOWN, so "N+" is always true. Users = totalUsers on the server:
+        // RD/TorBox accounts + P2P install ids + older P2P installs' busiest day — a floor, not the
+        // raw all-time id count, which grows with every new IP.
         const show = (id, n) => { if (n) document.getElementById(id).textContent = roundDown(n) + '+'; };
-        show('statUsers', s.usersPerDay);
-        show('statUsersHeader', s.usersPerDay);
+        show('statUsers', s.totalUsers);
+        show('statUsersHeader', s.totalUsers);
         show('statStreams', s.streamRequests);
         show('statStreamsHeader', s.streamRequests);
         show('statTorrents', s.archiveTorrents);
