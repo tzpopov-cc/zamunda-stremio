@@ -72,6 +72,8 @@ the count is ≥ 90% of the last good backup; a failure is pushed to the ntfy so
 | Mac `~/Backups/zamunda-catalogue/` | launchd `com.tzkppv.zamunda-backup` 09:00 local (runs on wake if missed) | same | `~/.config/zamunda/backup.env` (600) |
 
 Logs: Oracle `/var/log/zamunda-backup.log`, Mac `~/Backups/zamunda-catalogue/backup.log`.
+A download is tried 6 times a minute apart (`TRIES`, `RETRY_WAIT`): a Mac just woken from sleep runs
+the job before its network is back ("Could not resolve host"), which lost four Mac copies in two weeks.
 The Mac job runs a copy at `~/.local/bin/zamunda-backup-catalogue.sh` (launchd cannot read
 `~/Downloads`) — re-`install` it after changing the script. If `DASHBOARD_KEY` is rotated, update
 both key files or the backups fail (loudly).
@@ -96,7 +98,10 @@ position in the WHOLE torrent (subtitles and .nfo included), which is what Strem
 server expects as `fileIdx`. It is a cache, not data to protect: delete it and it rebuilds on demand.
 
 Rollback: the server keeps `server.js.bak-<version>-predeploy` + `config.html.bak-<version>-predeploy`
-for every deploy (2.6.2 – 2.6.5 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
+for every deploy (2.6.2 – 2.6.6 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
+Since 2.6.7 a deploy also tags the old image (`docker tag zamunda-stremio-zamunda-stremio:latest …:<old version>`)
+and copies `data/` to `data.bak-<old version>-predeploy` while the container is STOPPED (build first, then
+`stop` → `cp -a` → `up -d`: about 3 s down, and the copy is consistent).
 
 ### zamunda.life reads only the first five words of a query
 
@@ -128,6 +133,12 @@ make a second user. Stremio syncs the link to every device of the account, so on
 account. Installs made before v2.6.6 carry no id until they reinstall — the "older P2P" part shrinks
 as they do. A shared link counts as one user (errs low).
 
+**Busiest user (since v2.6.7).** The daily table's "Busiest user" column is the one user with the most
+stream requests that day, as count, share of the day's requests, kind and a 6-character tag (a salted
+hash — the same client keeps its tag across days, but it cannot be turned back into an IP or a token).
+The top five per day are kept in `daily[date].top`. Added after stream requests halved from 12.10.2026
+with the number of people flat: if one client makes a large share, it shows here.
+
 **Magnet coverage.** Catalogue size divided by the archive's own size. The archive publishes it at
 `https://zamunda.life/api/stats` (`{"total":448023,"zamunda":396421,"arena":42989,"zelka":8613}` on
 2026-10-07); the addon reads it every 6 h through the proxy's keyed `/stats` route and keeps the last
@@ -155,10 +166,60 @@ from a real wrong stream:
 - **Bare fallback** (no season anywhere) only for shows whose releases carry no seasons at all, and only
   for releases named exactly as the show with no episode number after the name. Otherwise the viewer
   gets "Няма сезон N" instead of a film or a season-1 pack.
+- **Romaji names (v2.6.7)** (`animeAltNames`): for Japanese animation Cinemeta gives the English name
+  ("Kuroko's Basketball") while many releases carry the romaji one ("Kuroko no Basket 1-25"). Kitsu
+  supplies it — only from an entry whose English title is the show and whose first year matches, cached
+  7 days. Each later season has a romaji name of its own, so a release found ONLY by the romaji name
+  counts as season 1 unless it declares a season ("Kuroko no Basket (2012) (Complete)" is not S2/S3).
 - Known gap: an absolute anime number ("Kuroko's Basketball 3 - 72" = S3E22) is not mapped.
 
-Test method: `old` vs `new` over 331 real ids (300 from the logs + 31 targeted) with the caching stub;
-v2.6.6 lost no correct stream, the 30 titles only the old version served were all wrong releases.
+Test method: `tools/replay/` (below) — `old` vs `new` over real ids with the caching stub. v2.6.6 lost
+no correct stream; the 30 titles only the old version served were all wrong releases.
+
+### Which file plays (v2.6.7)
+
+One rule for TorBox, Real-Debrid and the P2P `fileIdx` (`pickEpisodeFile`, `pickMovieFile`,
+`chooseDebridFile`). Until v2.6.7 the debrid paths knew only "S01E05" and otherwise played the biggest
+file — a real TorBox account showed "Vikings s01-03" playing `s02 ep07` for S1E1 and
+"The.Matrix.Collection" playing Reloaded.
+- **Episode:** season and episode in the file name in any common spelling (S01E05, s01 ep05, S1.E5,
+  1x05, "ahs01e05"); a single-episode file beats a double one (S01E04E05). Failing that, a file whose
+  season is known — from its name, its folder ("Season 2/", "Сезон 2/", "S02/") or a torrent declaring
+  one season — and that names only the episode (E05, Ep 05, Епизод 5, anime " - 05 ", "05 - Pilot").
+  A file that spells out a different episode is never taken ("11.22.63.S01E01" is not E11). A torrent
+  that names no season counts as season 1 when season 1 is asked for.
+- **Film:** one feature-length file (≥ 40 % of the biggest) → that one. Several (a collection) → the
+  one with the film's year and words, fewest extra words; scene folders count ("Toy.Story.II.1999…/
+  wtstory2.mkv"). P2P resolves this only for collection-named torrents (`COLLECTION_NAME`).
+- **No answer:** a debrid row is dropped (a pack without the episode, a collection that does not say
+  which file is the film); P2P sends no `fileIdx` and the player chooses.
+- Tested 14.10.2026 on the 1 781 stored file lists (`tools/test-file-picker.js`): 21 393 picks
+  identical to v2.6.6, 0 lost, ~2 800 new episodes found, 0 picks of a file naming another episode;
+  31 films in 9 real collections all right.
+
+### TorBox plays on demand (v2.6.7)
+
+The list makes ONE cache check (`checkcached`, with file lists) and keeps a cached release only if it
+holds the right file. Each TorBox row points to `/<config>/play/tb/<type>/<id>/<hash>`; pressing play
+adds the torrent, picks the file and redirects (302) to TorBox's link, reused for 2 h. Before, every
+cached release of every title merely opened was added to the viewer's library (a test account had 805)
+and the list took 4–5 s; now 0,3–0,5 s, play ~1,5 s. Real-Debrid still adds at list time: RD has no
+cache check any more, so adding is the only way to know what is instant — and it is untested without
+an RD token.
+
+### Replay test — run before every matching or file-choice change
+
+```bash
+cd tools/replay
+node build-ids.js real_searches.tsv > ids.txt   # real searches (from stats.json logs) + popular + targeted
+./start.sh HEAD                                  # OLD = HEAD on :7101, NEW = working copy on :7102
+node drive.js ids.txt out/warm && node drive.js ids.txt out/final   # 2nd pass: caches warm, packs resolved
+node diff.js out/final                           # lost / gained rows, fileIdx changes, info rows
+```
+
+`stubs.js` answers the archive and itorrents from `cache/` so both versions see identical data; the
+tracker is pointed at a dead port so seeder counts cannot differ. Unit tests alone are not enough:
+every v2.6.6 round found real losses they missed.
 
 ### Egress proxy (Oracle)
 
@@ -315,7 +376,11 @@ so a low number is a floor, not a ceiling.
 - Service runs as `zproxy` — system account, no shell, no home, not in any sudo group.
 - SSH: `passwordauthentication no`, `kbdinteractiveauthentication no`, keys only.
 - Automatic **security** updates via `dnf-automatic.timer` (`upgrade_type = security`, `apply_updates = yes`).
-- Only ports 22 and 7011 listen at all.
+- Only TCP 22, TCP 7011 and UDP 51820 listen on public addresses. `rpcbind` (port 111, an Oracle
+  Linux default, unused here) was disabled on 2026-10-14; it was already blocked by NSG and firewalld.
+- Kernel updates install automatically but need a reboot: `sudo needs-restarting -r`. A reboot from
+  the OS keeps the IP (never stop the instance from the console); everything comes back on its own in
+  ~20 s (proxy, tunnel, firewall). Last reboot 2026-10-14.
 
 **Closed 2026-09-20:** the hop used to be plain HTTP with the API key in cleartext. It now runs over
 WireGuard. The fallback path is still plaintext, but it is only used when the tunnel is down, and it

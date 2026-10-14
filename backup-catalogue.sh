@@ -17,6 +17,8 @@
 #   KEEP_DAYS   dated copies to keep                 (default 30)
 #   SOURCE_URL  export endpoint                      (default: the live addon)
 #   NTFY_URL    failure alerts                       (default: the source-monitor topic; "" = off)
+#   TRIES       download attempts                    (default 6)
+#   RETRY_WAIT  seconds between attempts             (default 60)
 #
 set -uo pipefail
 
@@ -42,8 +44,16 @@ mkdir -p "$BACKUP_DIR" || { TMP=""; fail "cannot create $BACKUP_DIR"; }
 TMP="$BACKUP_DIR/.incoming.jsonl"
 STATE="$BACKUP_DIR/.last-count"
 
-curl -sS --fail -m 300 -G --data-urlencode "key=$KEY" "$SOURCE_URL" -o "$TMP" \
-    || fail "download failed from $SOURCE_URL"
+# A Mac that has just woken up runs this before its network is back ("Could not resolve host"),
+# which cost four copies in two weeks (02, 07, 12, 14.10). Wait it out: 6 tries, a minute apart.
+TRIES="${TRIES:-6}"
+RETRY_WAIT="${RETRY_WAIT:-60}"
+for attempt in $(seq 1 "$TRIES"); do
+    curl -sS --fail -m 300 -G --data-urlencode "key=$KEY" "$SOURCE_URL" -o "$TMP" && break
+    [ "$attempt" -eq "$TRIES" ] && fail "download failed from $SOURCE_URL after $TRIES tries"
+    echo "$(date -u +%FT%TZ) try $attempt failed, retrying in ${RETRY_WAIT}s" >&2
+    sleep "$RETRY_WAIT"
+done
 
 # Validate every line; print the record count.
 COUNT="$(python3 - "$TMP" <<'PY'

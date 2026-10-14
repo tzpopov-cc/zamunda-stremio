@@ -2,3 +2,6 @@ node_modules/
 test_rd.js
 test_rd2.js
 CLAUDE.md
+tools/replay/cache/
+tools/replay/run/
+tools/replay/out/

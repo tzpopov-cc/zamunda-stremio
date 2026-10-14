@@ -77,6 +77,8 @@ const store = {
     lastSeen: {},               // user id -> 'YYYY-MM-DD' last active (since v2.6.5) -> active 7/30 days
     lastSeenSince: '',          // first day lastSeen was kept — a 30-day count is partial until then + 29
     archive: null,              // the source archive's own size: { total, zamunda, arena, zelka, at }
+    reqDay: '',                 // the day reqCounts belongs to (since v2.6.7)
+    reqCounts: new Map(),       // user id -> stream requests that day -> daily[date].top at day end
 };
 
 function loadStore() {
@@ -95,6 +97,7 @@ function loadStore() {
         store.lastSeen = d.lastSeen || {};
         store.lastSeenSince = d.lastSeenSince || '';
         store.archive = d.archive || null;
+        if (d.req && d.req.day) { store.reqDay = d.req.day; store.reqCounts = new Map(Object.entries(d.req.counts || {})); }
         // First boot with lastSeen: today's users are already known, so start from them.
         if (!store.lastSeenSince && store.today.date) {
             store.lastSeenSince = store.today.date;
@@ -131,6 +134,7 @@ function persist() {
         lastSeen: store.lastSeen,
         lastSeenSince: store.lastSeenSince,
         archive: store.archive,
+        req: { day: store.reqDay, counts: Object.fromEntries(store.reqCounts) },
     });
     try {
         fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -311,7 +315,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.6.6',
+        version: '2.6.7',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -355,7 +359,8 @@ async function getMetadata(type, imdbId) {
             const meta = res.data && res.data.meta;
             // Only cache usable metadata — caching a nameless meta poisons the key for the full TTL
             if (!meta || !meta.name) return meta || null;
-            const slim = { name: meta.name, bulgarian_name: meta.bulgarian_name, year: meta.year, releaseInfo: meta.releaseInfo };
+            const slim = { name: meta.name, bulgarian_name: meta.bulgarian_name, year: meta.year, releaseInfo: meta.releaseInfo,
+                genres: meta.genres || meta.genre || [], country: meta.country || '' };
             setCached(key, slim, META_TTL);
             return slim;
         } catch (e) {
@@ -364,6 +369,46 @@ async function getMetadata(type, imdbId) {
         }
     }
     return null;
+}
+
+// Anime is often released under its romaji name ("Kuroko no Basket 1-25") while Cinemeta names it in
+// English ("Kuroko's Basketball"), so a search by the English name never finds those releases — and
+// the viewer was told season 1 "is not in the archive" (found 14.10.2026). Kitsu knows both names.
+// Only for Japanese animation, and only from a Kitsu entry whose English title IS this show and whose
+// first year is the show's. Kitsu lists each season as its own entry, so this is season 1's name.
+const KITSU_API = 'https://kitsu.io/api/edge/anime';
+const ALT_TTL = 7 * 24 * 60 * 60 * 1000;
+async function animeAltNames(imdbId, meta) {
+    if (![].concat(meta.genres || []).includes('Animation') || !/japan/i.test(meta.country || '')) return [];
+    const key = `alt:${imdbId}`;
+    const cached = getCached(key);
+    if (cached) return cached;
+    const year = parseYear(meta.year || meta.releaseInfo);
+    const want = normalizeTitle(meta.name);
+    const names = [];
+    try {
+        const res = await axios.get(KITSU_API, { timeout: 4000, params: {
+            'filter[text]': meta.name, 'page[limit]': 10,
+            'fields[anime]': 'titles,canonicalTitle,abbreviatedTitles,startDate',
+        } });
+        for (const x of res.data?.data || []) {
+            const a = x.attributes || {};
+            const english = [a.titles?.en, a.titles?.en_us, a.canonicalTitle].filter(Boolean).map(normalizeTitle);
+            const start = parseYear(a.startDate);
+            if (!english.includes(want) || !year || !start || Math.abs(start - year) > 1) continue;
+            for (const n of [a.titles?.en_jp, ...(a.abbreviatedTitles || [])]) {
+                if (!n || !/^[\x20-\x7E]+$/.test(n)) continue;       // romaji, not kana or kanji
+                if (nameTokens(n).length < 2) continue;                // "KuroBas" alone would match anything
+                if (normalizeTitle(n) !== want) names.push(n);
+            }
+        }
+    } catch (e) {
+        console.error('Kitsu error:', e.message);
+        return [];                                                     // not cached: ask again next time
+    }
+    const out = [...new Set(names)].slice(0, 3);
+    setCached(key, out, ALT_TTL);
+    return out;
 }
 
 // Live upstream health, derived only from real network attempts (our own cache hits prove nothing).
@@ -1230,27 +1275,25 @@ function fetchTorrentFiles(infohash) {
     return p;
 }
 
-async function resolveFileIdx(infohash, season, episode) {
+// `title` is the torrent's name (its declared seasons settle files that name none). For a film,
+// season/episode are null and `film` = { name, year } picks the right film out of a collection.
+async function resolveFileIdx(infohash, season, episode, title = '', film = null) {
     const media = await fetchTorrentFiles(infohash);
     if (!media || !media.length) return null;
-
-    const s = String(season).padStart(2, '0');
-    const e = String(episode).padStart(2, '0');
-    const pattern = new RegExp(`S${s}E${e}(?!\\d)`, 'i');
-    // Match the file NAME: a folder called "S01E01-E10" would otherwise match every file in it.
-    const hits = media.filter(([, p]) => pattern.test(p.split('/').pop()));
-    if (!hits.length) return null;
-    // A sample shares the episode's name; the episode itself is the biggest file.
-    const [idx, p] = hits.reduce((a, b) => (b[2] > a[2] ? b : a));
-    console.log(`  📁 fileIdx ${idx} → ${p}`);
-    return idx;
+    const files = media.map(([idx, name, size]) => ({ idx, name, size }));
+    const pick = film
+        ? pickMovieFile(files, film.name, film.year)
+        : pickEpisodeFile(files, season, episode, packSeasons(title, season));
+    if (!pick) return null;
+    console.log(`  📁 fileIdx ${pick.idx} → ${pick.name}`);
+    return pick.idx;
 }
 
 // Resolve what can be resolved within `ms`; fetches still running carry on in the background and
 // land in the store for the next request. Returns true when everything finished in time.
-async function resolvePacksWithin(packs, season, episode, ms) {
+async function resolvePacksWithin(packs, season, episode, ms, film = null) {
     const work = mapLimit(packs, 5, async (t) => {
-        const idx = await resolveFileIdx(t._infohash, season, episode);
+        const idx = await resolveFileIdx(t._infohash, season, episode, t.title, film);
         if (idx !== null) t._resolvedFileIdx = idx;
     }).catch(() => {});   // never throws today; a late rejection must not become an unhandled one
     let timer;
@@ -1258,6 +1301,165 @@ async function resolvePacksWithin(packs, season, episode, ms) {
     const done = await Promise.race([work.then(() => true), deadline]);
     clearTimeout(timer);
     return done;
+}
+
+// =====================================================
+// WHICH FILE IN A TORRENT — shared by TorBox, Real-Debrid and the P2P fileIdx (v2.6.7)
+// =====================================================
+// Until v2.6.7 each path knew one spelling of an episode — "S01E05" — and otherwise played the
+// biggest file. Found with a real TorBox account on 14.10.2026: "Vikings s01-03" played
+// "Vikings s02 ep07.avi" for S1E1, and "The.Matrix.Collection" played Reloaded for The Matrix.
+// Files are { name, size } with `name` the path inside the torrent (folders included).
+const SIDE_FILE = /(^|[^a-z])(sample|trailer|featurette|extras?|bonus)([^a-z]|$)/i;
+
+// The season a piece of a path names: "S02", "s02 ep07", "1x05", "Season 2", "Сезон 2", "2nd Season",
+// anime "Kuroko's Basketball 3 - 05". Null when it names none — or a range ("S01-S03", a pack root).
+function seasonIn(str) {
+    if (/s\d{1,2}\s*[-–]\s*s?\d{1,2}(?!\d)|(?:seasons?|сезони)[\s._-]*\d{1,2}\s*[-–]\s*\d/i.test(str)) return null;
+    let m = str.match(/(?:^|[^a-z0-9])s(\d{1,2})(?![\d])/i)
+        || str.match(/(?<![\d.])(\d{1,2})x(?!26[45])\d{1,3}(?!\d)/i)
+        || str.match(/(?:season|series|сезон)[\s._-]*(\d{1,2})(?!\d)/i)
+        || str.match(/(?:^|[^a-z0-9])(\d{1,2})(?:st|nd|rd|th)[\s._-]*season/i)
+        || str.match(/(?<=[a-z'\])]\s)([1-9]\d?)(?=\s+-\s+\d)/i);
+    return m ? parseInt(m[1]) : null;
+}
+// The file name decides; its folders only when the name itself says nothing.
+function fileSeason(path) {
+    const parts = path.split('/');
+    for (let i = parts.length - 1; i >= 0; i--) {
+        const n = seasonIn(parts[i]);
+        if (n !== null) return n;
+    }
+    return null;
+}
+// Season AND episode spelled out in the file name. 2 = this episode alone or first (S01E05, s01 ep05,
+// S1.E5, 1x05, "ahs01e05"); 1 = the second half of a double file (S01E04E05, S01E04-E05, S01E04-05);
+// 0 = no. A single-episode file beats a double one that also holds it.
+function namesEpisode(base, season, episode) {
+    const S = season, E = episode;
+    const ss = String(S).padStart(2, '0'), ee = String(E).padStart(2, '0');
+    if (new RegExp(`(?:^|[^a-z0-9])s0*${S}[\\s._-]*(?:e|ep|x)[\\s._-]*0*${E}(?!\\d)`, 'i').test(base)
+        || new RegExp(`s${ss}e${ee}(?!\\d)`, 'i').test(base)
+        || new RegExp(`(?<![\\d.])0*${S}x0*${E}(?!\\d)`, 'i').test(base)) return 2;
+    if (new RegExp(`s0*${S}[\\s._-]*e\\d{1,3}(?:-?e|-)0*${E}(?!\\d)`, 'i').test(base)) return 1;
+    return 0;
+}
+// Any episode number a file name spells out explicitly (S01E05, 1x05, E05/Ep 05) — a file that names
+// one is never taken for a different episode by the looser rules below ("11.22.63.S01E01" is not E11).
+function explicitEpisodes(base) {
+    const out = [];
+    for (const m of base.matchAll(/(?:^|[^a-z0-9])s\d{1,2}[\s._-]*(?:e|ep)[\s._-]*(\d{1,4})(?:(?:-?e|-)(\d{1,4}))?(?!\d)/gi)) {
+        out.push(+m[1]); if (m[2]) out.push(+m[2]);
+    }
+    for (const m of base.matchAll(/(?<![\d.])\d{1,2}x(?!26[45])(\d{1,3})(?!\d)/gi)) out.push(+m[1]);
+    for (const m of base.matchAll(/(?:^|[^a-z0-9])(?:e|ep|episode|еп|епизод|серия)[\s._-]*(\d{1,4})(?![a-zа-я\d])/gi)) out.push(+m[1]);
+    return out;
+}
+// Only the episode, for a file whose season is already known: "E05", "Ep 05", "Episode 5",
+// "Епизод 5", "Серия 5", anime "Title 3 - 05 [720p]", or a name that starts with it ("05 - Pilot").
+function namesBareEpisode(base, episode) {
+    const E = episode;
+    const named = explicitEpisodes(base);
+    if (named.length) return named.includes(E);
+    // Nothing explicit: anime " - 05 " or a name that starts with the number ("05 - Pilot", "05.avi").
+    // The lookahead keeps a checksum like "[E5D35ACD]" from reading as episode 5.
+    return new RegExp(`\\s-\\s0*${E}(?:v\\d)?(?=[\\s._\\[(]|$)`).test(base)
+        || new RegExp(`^0*${E}(?=[\\s._-]|$)`).test(base);
+}
+function stripExt(name) { return name.replace(/\.[a-z0-9]{2,4}$/i, ''); }
+function mediaOf(files) {
+    const media = files.filter(f => MEDIA_EXT.test(f.name));
+    const main = media.filter(f => !SIDE_FILE.test(f.name.split('/').pop()));
+    return main.length ? main : media;
+}
+const biggest = list => list.reduce((a, b) => (b.size > a.size ? b : a));
+
+// The file of one episode, or null when the torrent does not say which one it is — the caller then
+// decides (a debrid path drops the row, P2P leaves the choice to the player). `titleSeasons` are the
+// seasons the torrent's own name declares; a file that names no season belongs to that season only
+// when the torrent declares just one.
+function pickEpisodeFile(files, season, episode, titleSeasons = []) {
+    // All media files, extras included: a sample loses to its episode on size, and "Trailer" can be
+    // part of a real episode's title (South Park S06E05).
+    const media = files.filter(f => MEDIA_EXT.test(f.name));
+    if (!media.length) return null;
+    const base = f => stripExt(f.name.split('/').pop());
+    for (const rank of [2, 1]) {
+        const exact = media.filter(f => namesEpisode(base(f), season, episode) === rank);
+        if (exact.length) return biggest(exact);
+    }
+    const ofSeason = media.filter(f => {
+        const fs = fileSeason(f.name);
+        if (fs !== null) return fs === season;
+        return titleSeasons.length === 1 && titleSeasons[0] === season;
+    });
+    const bare = ofSeason.filter(f => namesBareEpisode(base(f), episode));
+    return bare.length ? biggest(bare) : null;
+}
+
+// The seasons a torrent's name declares; one that names none is season 1 when season 1 is asked for.
+function packSeasons(title, season) {
+    const declared = declaredSeasons((title || '').toUpperCase()).map(d => d.season);
+    return declared.length ? declared : season === 1 ? [1] : [];
+}
+
+// The film in a torrent. One feature-length file: that one. Several (a collection): the one whose
+// name carries the film's year and words, fewest extra words first ("The.Matrix.1999" over
+// "The.Matrix.Reloaded.2003"). Null when nothing tells them apart.
+function pickMovieFile(files, name, year) {
+    const media = mediaOf(files);
+    if (!media.length) return null;
+    const top = biggest(media);
+    const features = media.filter(f => f.size >= top.size * 0.4);
+    if (features.length <= 1) return top;
+    const toks = nameTokens(name);
+    // Scene releases name the film in its folder and give the file a code ("Toy.Story.II.1999…/wtstory2.mkv"),
+    // so a file name without a year borrows its nearest folder that has one — never the torrent's own
+    // root folder, which names the whole collection ("Toy.Story.Trilogy.1995-2010").
+    const roots = new Set(features.map(f => (f.name.includes('/') ? f.name.split('/')[0] : '')));
+    const root = roots.size === 1 ? [...roots][0] : '';
+    const label = f => {
+        const segs = f.name.split('/');
+        if (root && segs[0] === root) segs.shift();
+        const file = stripExt(segs.pop());
+        if (torrentYears(file).length) return file;
+        for (let i = segs.length - 1; i >= 0; i--) if (torrentYears(segs[i]).length) return segs[i];
+        return file;
+    };
+    const scored = features.map(f => {
+        const base = label(f);
+        const words = new Set(normalizeTitle(base).split(' '));
+        const years = torrentYears(base);
+        const yearScore = !year || !years.length ? 0 : years.includes(year) ? 2 : -2;
+        const cover = toks.filter(t => words.has(t)).length;
+        const extra = torrentTitlePrefix(base).split(' ').filter(w => w && !toks.includes(w) && !TITLE_STOPWORDS.has(w)).length;
+        return { f, key: [yearScore, cover, -extra] };
+    });
+    const cmp = (a, b) => b.key[0] - a.key[0] || b.key[1] - a.key[1] || b.key[2] - a.key[2];
+    scored.sort(cmp);
+    const best = scored.filter(x => cmp(x, scored[0]) === 0);
+    return best.length === 1 ? best[0].f : null;
+}
+
+// A torrent name that promises several films.
+const COLLECTION_NAME = /collection|trilogy|duology|quadrilogy|pentalogy|hexalogy|anthology|saga|complete|колекция|трилогия|(?:19|20)\d{2}\s*[-–]\s*(?:19|20)\d{2}|\b1\s*[-–]\s*\d\b/i;
+
+// The file a debrid link should play, or null when this torrent cannot be trusted to hold what was
+// asked for: a pack without the episode, or a collection that does not say which file is the film.
+// `want` = { season, episode, film: { name, year } } and the torrent's title and match type.
+function chooseDebridFile(files, want, title, matchType) {
+    const media = files.filter(f => MEDIA_EXT.test(f.name));
+    if (!media.length) return null;
+    if (want.season && want.episode) {
+        const pick = pickEpisodeFile(files, want.season, want.episode, packSeasons(title, want.season));
+        if (pick) return pick;
+        // A single-episode release with an oddly named file still holds only that episode (and samples).
+        return matchType === 'episode' || media.length === 1 ? biggest(media) : null;
+    }
+    if (media.length === 1) return media[0];
+    const pick = pickMovieFile(files, want.film ? want.film.name : '', want.film ? want.film.year : null);
+    if (pick) return pick;
+    return COLLECTION_NAME.test(title || '') ? null : biggest(mediaOf(files));
 }
 
 // =====================================================
@@ -1276,7 +1478,7 @@ async function parallelLimit(tasks, limit) {
     return results;
 }
 
-async function checkAndResolve(magnet, rdToken, season, episode) {
+async function checkAndResolve(magnet, rdToken, want, title, matchType) {
     const headers = { Authorization: `Bearer ${rdToken}` };
     let torrentId;
     try {
@@ -1304,13 +1506,15 @@ async function checkAndResolve(magnet, rdToken, season, episode) {
             return null;
         }
 
-        let target;
-        if (season && episode && videoFiles.length > 1) {
-            const s = String(season).padStart(2, '0');
-            const e = String(episode).padStart(2, '0');
-            target = videoFiles.find(f => new RegExp(`S${s}E${e}|${parseInt(season)}x${e}|E${e}[^0-9]`, 'i').test(f.path));
+        // Same rule as TorBox (v2.6.7): the episode in any common spelling, the film out of a
+        // collection — and no link at all rather than the biggest file of a pack that lacks it.
+        const picked = chooseDebridFile(videoFiles.map(f => ({ id: f.id, name: f.path.replace(/^\//, ''), size: f.bytes })),
+            want, title, matchType);
+        if (!picked) {
+            await axios.delete(`${RD_API}/torrents/delete/${torrentId}`, { headers }).catch(() => {});
+            return null;
         }
-        if (!target) target = videoFiles.sort((a, b) => b.bytes - a.bytes)[0];
+        const target = videoFiles.find(f => f.id === picked.id);
 
         await axios.post(`${RD_API}/torrents/selectFiles/${torrentId}`,
             new URLSearchParams({ files: target.id.toString() }), { headers, timeout: 8000 });
@@ -1362,53 +1566,49 @@ async function tbCheckCached(infohashes, tbToken) {
     }
 }
 
-async function tbResolve(magnet, infohash, tbToken, season, episode) {
+// TorBox links are made when the viewer presses play, not when the list is built (v2.6.7). Until then
+// every cached release in a list was added to the viewer's TorBox library on every visit — one test
+// account had 805 torrents in it — and each add spent a create call against TorBox's rate limit.
+// The list now needs one cache check; the add happens once, for the release actually played.
+const TB_LINK_TTL = 2 * 60 * 60 * 1000;
+
+function tbPlayUrl(tbToken, type, fullId, infohash) {
+    const cfg = encodeURIComponent(`debrid=torbox|tbtoken=${tbToken}`);
+    return `${PUBLIC_URL}/${cfg}/play/tb/${type}/${encodeURIComponent(fullId)}/${infohash}`;
+}
+
+async function tbPlay(tbToken, infohash, want) {
     const headers = { Authorization: `Bearer ${tbToken}` };
-    try {
-        // Create torrent (if cached, returns instantly)
-        const createRes = await axios.post(`${TB_API}/api/torrents/createtorrent`,
-            new URLSearchParams({ magnet, allow_zip: 'false' }),
-            { headers, timeout: 15000 });
+    const createRes = await axios.post(`${TB_API}/api/torrents/createtorrent`,
+        new URLSearchParams({ magnet: `magnet:?xt=urn:btih:${infohash}`, allow_zip: 'false' }),
+        { headers, timeout: 15000 });
+    const torrentId = createRes.data?.data?.torrent_id;
+    if (!createRes.data?.success || !torrentId) throw new Error(createRes.data?.detail || 'create failed');
 
-        if (!createRes.data?.success) return null;
-        const torrentId = createRes.data.data?.torrent_id;
-        if (!torrentId) return null;
-
-        // Get torrent info
+    // A cached torrent is normally ready at once; give it a moment if not.
+    let torrent;
+    for (let i = 0; i < 3; i++) {
         const infoRes = await axios.get(`${TB_API}/api/torrents/mylist`, {
-            params: { id: torrentId, bypass_cache: true },
-            headers, timeout: 10000
+            params: { id: torrentId, bypass_cache: true }, headers, timeout: 10000,
         });
-
-        const torrent = infoRes.data?.data;
-        if (!torrent?.download_present) return null;
-
-        // Find video file
-        const videoFiles = (torrent.files || [])
-            .filter(f => /\.(mkv|mp4|avi|mov|m4v|ts|webm|vob)$/i.test(f.short_name));
-        if (videoFiles.length === 0) return null;
-
-        let target;
-        if (season && episode && videoFiles.length > 1) {
-            const s = String(season).padStart(2, '0');
-            const e = String(episode).padStart(2, '0');
-            const epPattern = new RegExp(`S${s}E${e}|${parseInt(season)}x${e}|E${e}[^0-9]`, 'i');
-            target = videoFiles.find(f => epPattern.test(f.name || f.short_name));
-        }
-        if (!target) target = videoFiles.sort((a, b) => b.size - a.size)[0];
-
-        // Get download link
-        const dlRes = await axios.get(`${TB_API}/api/torrents/requestdl`, {
-            params: { token: tbToken, torrent_id: torrentId, file_id: target.id },
-            headers, timeout: 10000
-        });
-
-        return dlRes.data?.data || null; // data is the download URL string
-    } catch (e) {
-        console.error('TorBox resolve error:', e.response?.data?.detail || e.message);
-        logEvent('ERROR', `TB resolve: ${e.response?.data?.detail || e.message}`);
-        return null;
+        torrent = infoRes.data?.data;
+        if (torrent?.download_present) break;
+        await new Promise(r => setTimeout(r, 1500));
     }
+    if (!torrent?.download_present) throw new Error('not ready on TorBox');
+
+    const files = (torrent.files || []).map(f => ({ id: f.id, name: f.name || f.short_name || '', size: f.size || 0 }));
+    // The list already checked this torrent holds the right file; if the names now say otherwise,
+    // the biggest file is the least-bad answer to a press of play.
+    const media = files.filter(f => MEDIA_EXT.test(f.name));
+    const target = chooseDebridFile(files, want, torrent.name, 'season') || (media.length ? biggest(media) : null);
+    if (!target) throw new Error('no video file in the torrent');
+    const dlRes = await axios.get(`${TB_API}/api/torrents/requestdl`, {
+        params: { token: tbToken, torrent_id: torrentId, file_id: target.id }, headers, timeout: 10000,
+    });
+    if (!dlRes.data?.data) throw new Error(dlRes.data?.detail || 'no link');
+    console.log(`  ▶️ TB ${infohash.substring(0, 8)} → ${target.name}`);
+    return dlRes.data.data;
 }
 
 // =====================================================
@@ -1757,6 +1957,8 @@ async function resolveStreams(type, fullId, config) {
     // because zamunda API returns max 20 results per query
     const queries = [meta.name];
     if (meta.bulgarian_name) queries.push(meta.bulgarian_name);
+    const altNames = type === 'series' ? await animeAltNames(imdbId, meta) : [];
+    queries.push(...altNames);
     const movieYear = type === 'movie' ? parseYear(meta.year || meta.releaseInfo) : null;
     if (movieYear) queries.push(`${meta.name} ${movieYear}`);   // surface the right-year release even if it ranks low
     if (type === 'series' && season) {
@@ -1821,7 +2023,17 @@ async function resolveStreams(type, fullId, config) {
         // Confirm the SHOW before looking for the episode. A wrong stream is worse than an
         // honest miss, so if nothing carries the show name we stop here rather than offering
         // whatever the search dragged in.
-        const onShow = allTorrents.filter(t => matchesSeriesTitle(t.title, meta.name, meta.bulgarian_name));
+        // The show's own names, then its romaji ones. A release found ONLY by a romaji name is season 1
+        // unless it says otherwise: each later season has a romaji name of its own ("Kuroko no Basket
+        // 2nd Season"), so "Kuroko no Basket (2012) (Complete)" is not seasons 2 and 3.
+        const names = [meta.name, ...altNames];
+        const nameOf = t => names.find(n => matchesSeriesTitle(t.title, n, meta.bulgarian_name));
+        const byAltOnly = t => nameOf(t) !== meta.name && !matchesSeriesTitle(t.title, meta.name, meta.bulgarian_name);
+        const altSeasonOk = t => {
+            const declared = declaredSeasons(t.title.toUpperCase()).map(d => d.season);
+            return declared.length ? declared.includes(season) : season === 1;
+        };
+        const onShow = allTorrents.filter(t => nameOf(t) && (!byAltOnly(t) || altSeasonOk(t)));
         if (!onShow.length) {
             logEvent('MISS', `${label} — ${beforeCount} results, none carry the show name [${allTorrents.slice(0, 3).map(t => t.title).join(' | ')}]`);
             return [];
@@ -1841,8 +2053,7 @@ async function resolveStreams(type, fullId, config) {
             // "Tales.of.the.Walking.Dead") but sometimes the same one under a longer title
             // ("Special.Ops.Lioness" for Lioness). So they stay only when nothing for this
             // episode carries the name plainly.
-            const toks = nameTokens(meta.name);
-            const plain = matched.filter(t => namePrefix(t.title, toks).length === 0);
+            const plain = matched.filter(t => namePrefix(t.title, nameTokens(nameOf(t) || meta.name)).length === 0);
             if (plain.length && plain.length < matched.length) {
                 console.log(`  ${matched.length - plain.length} dropped: other words before the show name`);
             }
@@ -1857,7 +2068,7 @@ async function resolveStreams(type, fullId, config) {
             const fallback = showHasSeasons ? [] : allTorrents.filter(t => {
                 const u = t.title.toUpperCase();
                 return !/S\d|SEASON\s*\d|SERIES\s*\d|СЕЗОН|E\d|EP\d|\d+[-–~]\d+/.test(u)
-                    && isBareShowPack(t.title, meta.name, meta.bulgarian_name);
+                    && names.some(n => isBareShowPack(t.title, n, meta.bulgarian_name));
             }).map(t => ({ ...t, _matchType: 'fallback' }));
 
             if (fallback.length > 0) {
@@ -2010,11 +2221,21 @@ async function resolveStreams(type, fullId, config) {
                 console.log(`  ⏳ fileIdx: answering after ${FILES_WAIT_MS} ms, the rest resolves in the background`);
             }
         }
+    } else if (type === 'movie' && (p2pOnly || config.debridmode === 'all')) {
+        // A collection streamed peer-to-peer: without a fileIdx the player opens the biggest file, which
+        // is often another film of the set (Reloaded for The Matrix). Same wait rule as season packs.
+        const packs = filtered.filter(t => COLLECTION_NAME.test(t.title));
+        if (packs.length > 0) {
+            const done = await resolvePacksWithin(packs, null, null, FILES_WAIT_MS, { name: meta.name, year: movieYear });
+            if (!done) config._filesPending = true;
+        }
     }
 
     const hasRD = config.debrid === 'realdebrid' && config.rdtoken;
     const hasTB = config.debrid === 'torbox' && config.tbtoken;
     const debridMode = config.debridmode || config.rdmode || 'guaranteed'; // backward compat
+    // What a debrid link must play: this episode, or this film out of a collection.
+    const want = { season, episode, film: type === 'movie' ? { name: meta.name, year: movieYear } : null };
 
     // BG audio fallback hint — prepended to results when bgaudio filter found no BG tracks
     const hintBg = (config.lang || 'bg') === 'bg';
@@ -2060,21 +2281,21 @@ async function resolveStreams(type, fullId, config) {
             return [...hints, ...tbAuthHint, ...p2pStreams];
         }
 
-        const cachedTorrents = filtered.filter(t => cached.has(t._infohash));
-        console.log(`  ${cachedTorrents.length} cached on TorBox`);
-
-        // Resolve cached torrents — TorBox is fast, can do more concurrency
-        const tasks = cachedTorrents.map(torrent => async () => {
-            const url = await tbResolve(torrent.link, torrent._infohash, config.tbtoken, season, episode);
-            if (url) console.log(`  ✅ ${torrent._quality.tag} ${torrent.title.substring(0, 50)}`);
-            return { torrent, url };
+        // Keep a cached release only if its file list holds what was asked for (the episode, or the
+        // film inside a collection) — checked here on the list TorBox sends with the cache answer.
+        const playable = filtered.filter(t => {
+            const c = cached.get(t._infohash);
+            if (!c) return false;
+            const files = (c.files || []).map(f => ({ id: f.id, name: f.name || f.short_name || '', size: f.size || 0 }));
+            return !files.length || !!chooseDebridFile(files, want, t.title, t._matchType);
         });
-        const results = await parallelLimit(tasks, 3);
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        const tbStreams = results.filter(r => r.url).map(({ torrent, url }) => buildStream(torrent, url, 'tb'));
+        const dropped = filtered.filter(t => cached.has(t._infohash)).length - playable.length;
+        console.log(`  ${playable.length} cached on TorBox${dropped ? ` (${dropped} without the right file)` : ''}`);
+        const tbStreams = playable.map(t => buildStream(t, tbPlayUrl(config.tbtoken, type, fullId, t._infohash), 'tb'));
 
         if (debridMode === 'all') {
-            const resolvedHashes = new Set(results.filter(r => r.url).map(r => r.torrent._infohash));
+            const resolvedHashes = new Set(playable.map(t => t._infohash));
             const p2pStreams = dropDeadP2P(filtered.filter(t => !resolvedHashes.has(t._infohash)))
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${tbStreams.length} TB + ${p2pStreams.length} P2P in ${elapsed}s`);
@@ -2092,7 +2313,7 @@ async function resolveStreams(type, fullId, config) {
         console.log(`  RD mode (${debridMode}): checking ${filtered.length} torrents...`);
         const startTime = Date.now();
         const tasks = filtered.map((torrent, idx) => async () => {
-            const url = await checkAndResolve(torrent.link, config.rdtoken, season, episode);
+            const url = await checkAndResolve(torrent.link, config.rdtoken, want, torrent.title, torrent._matchType);
             if (url) console.log(`  ✅ ${torrent._quality.tag} ${torrent.title.substring(0, 50)}`);
             return { torrent, url };
         });
@@ -2269,6 +2490,10 @@ const LAST_SEEN_KEEP_DAYS = 60;
 function dayKeyAgo(days) { return new Date(Date.now() - days * 86400000).toISOString().substring(0, 10); }
 function trackUser(req, config) {
     const id = getUserId(req, config);
+    trackUserId(id);
+    return id;
+}
+function trackUserId(id) {
     sadd('users', id);
     // Distinct users per day, so a jump in requests can be told apart from a jump in people.
     const today = todayKey();
@@ -2289,6 +2514,44 @@ function trackUser(req, config) {
         markDirty();
     }
 }
+// Who makes the stream requests. On 12.10.2026 they halved overnight (~7 000 -> ~3 000 a day) while
+// the number of people stayed flat, and nothing kept could say whether one client had been making
+// half of them. So: requests per user for the current day (kept in stats.json, today only), and at
+// the day's end the busiest five go into daily[date].top as kind + count + a short tag. The tag is
+// a hash of the id with the private salt — the same client gets the same tag every day, so a
+// regular heavy hitter is recognisable, but it cannot be turned back into an IP or a token.
+const REQ_TOP = 5;
+function reqTag(id) { return crypto.createHash('sha256').update(store.userSalt + id).digest('hex').substring(0, 6); }
+function reqTop(counts) {
+    let total = 0;
+    for (const n of counts.values()) total += n;
+    const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, REQ_TOP)
+        .map(([id, n]) => ({ k: userKind(id), n, t: reqTag(id) }));
+    return { total, users: counts.size, top };
+}
+function closeReqDay() {
+    if (!store.reqDay || !store.reqCounts.size) return;
+    const d = (store.daily[store.reqDay] = store.daily[store.reqDay] || { streams: 0, pageViews: 0 });
+    const { users, top } = reqTop(store.reqCounts);
+    d.reqUsers = users;
+    d.top = top;
+}
+function trackRequest(id) {
+    const today = todayKey();
+    if (store.reqDay !== today) {
+        closeReqDay();
+        store.reqDay = today;
+        store.reqCounts = new Map();
+    }
+    store.reqCounts.set(id, (store.reqCounts.get(id) || 0) + 1);
+    markDirty();
+}
+// The day's busiest-user line for the dashboard: closed days from daily[date].top, today live.
+function busiestOn(date) {
+    if (date === store.reqDay && store.reqCounts.size) return reqTop(store.reqCounts).top[0] || null;
+    return (store.daily[date] && store.daily[date].top && store.daily[date].top[0]) || null;
+}
+
 // Distinct users active in the last `days` days (today included), split by kind.
 function activeUsers(days) {
     const cutoff = dayKeyAgo(days - 1);
@@ -2329,7 +2592,7 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
     incr('streams'); incrDaily('streams');
     try {
         const config = parseConfig(decodeURIComponent(req.params.config));
-        trackUser(req, config);
+        trackRequest(trackUser(req, config));
         const { type, id } = req.params;
         if (!['movie', 'series'].includes(type)) return res.json({ streams: [] });
         // The manifest asks for IMDb ids only, but some clients send kitsu:/tmdb: ids anyway.
@@ -2350,6 +2613,37 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         console.error('Stream handler error:', e);
         logEvent('ERROR', `Stream handler: ${e.message}`);
         res.json({ streams: [] });
+    }
+});
+
+// TorBox play — where a TorBox row points (see tbPlay). Stremio follows the redirect to the file. A
+// made link is reused for TB_LINK_TTL, so pausing and resuming does not add the torrent again.
+app.get('/:config/play/tb/:type/:id/:hash', async (req, res) => {
+    const config = parseConfig(decodeURIComponent(req.params.config));
+    const { type, id } = req.params;
+    const hash = req.params.hash.toLowerCase();
+    if (!config.tbtoken || !['movie', 'series'].includes(type) || !/^tt\d+(:\d+:\d+)?$/.test(id) || !/^[a-f0-9]{40}$/.test(hash)) {
+        return res.status(400).type('text/plain').send('bad play link');
+    }
+    const key = `tbplay:${crypto.createHash('md5').update(config.tbtoken).digest('hex').substring(0, 8)}:${hash}:${id}`;
+    const hit = getCached(key);
+    if (hit) return res.redirect(302, hit);
+    try {
+        const [imdbId, s, e] = id.split(':');
+        const want = { season: s ? parseInt(s) : null, episode: e ? parseInt(e) : null, film: null };
+        if (type === 'movie') {
+            const meta = await getMetadata('movie', imdbId);
+            if (meta) want.film = { name: meta.name, year: parseYear(meta.year || meta.releaseInfo) };
+        }
+        const url = await tbPlay(config.tbtoken, hash, want);
+        setCached(key, url, TB_LINK_TTL);
+        logEvent('TB', `play ${type} ${id}`);
+        res.redirect(302, url);
+    } catch (e) {
+        const detail = e.response?.data?.detail || e.message;
+        console.error('TorBox play error:', detail);
+        logEvent('ERROR', `TB play: ${detail}`);
+        res.status(502).type('text/plain').send('TorBox could not provide this file');
     }
 });
 
@@ -2419,6 +2713,14 @@ app.get('/dashboard', adminAuth, async (req, res) => {
     const cov = cat.coverage;
     const siteRow = (name, x) => `<div class="site"><span>${name}</span><span>${fmt(x.have)} / ${fmt(x.of)}</span>`
         + `<span class="bar"><i style="width:${Math.min(x.pct || 0, 100)}%"></i></span><span class="pct">${x.pct == null ? '–' : x.pct + '%'}</span></div>`;
+    // "312 (11%) P2P a1b2c3" — one user's share of the day's stream requests (kept since v2.6.7).
+    const kindLabel = { rd: 'RD', tb: 'TorBox', p2p: 'P2P' };
+    const busiestCell = (date, dayStreams) => {
+        const b = busiestOn(date);
+        if (!b) return '–';
+        const pct = dayStreams ? Math.round(b.n * 100 / dayStreams) : 0;
+        return `${fmt(b.n)} <span class="dim">(${pct}%) ${kindLabel[b.k] || b.k} ${b.t}</span>`;
+    };
     const historyRaw = await hgetall('dailyStats');
     // Build history from snapshots + daily counters
     const history = [];
@@ -2559,11 +2861,12 @@ ${history.length > 0 ? `
 <div class="log-box" style="max-height:30vh">
 <table style="width:100%;border-collapse:collapse;font-size:12px">
 <tr style="color:var(--gold);text-align:left;border-bottom:1px solid var(--border)">
-<th style="padding:6px 4px">Date</th><th>Active</th><th>Streams</th><th>Page Views</th><th>Magnets</th><th>New magnets</th></tr>
+<th style="padding:6px 4px">Date</th><th>Active</th><th>Streams</th><th>Busiest user</th><th>Page Views</th><th>Magnets</th><th>New magnets</th></tr>
 ${history.map(h => {
     return '<tr style="border-bottom:1px solid rgba(255,255,255,0.03)"><td style="padding:4px;color:var(--dim)">' + h.date.substring(5) + '</td>'
     + '<td>' + (h.dayUsers || '–') + '</td>'
     + '<td style="color:var(--gold)">' + (h.dayStreams || 0) + '</td>'
+    + '<td>' + busiestCell(h.date, h.dayStreams) + '</td>'
     + '<td style="color:var(--gold)">' + (h.dayViews || 0) + '</td>'
     + '<td>' + (magnetsOn(h.date) == null ? '–' : fmt(magnetsOn(h.date))) + '</td>'
     + '<td style="color:var(--green)">' + (magnetsOn(h.date) == null ? '–' : '+' + fmt(newByDay[h.date] || 0)) + '</td></tr>';
@@ -2576,7 +2879,7 @@ ${history.map(h => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.6.6</span>
+<span style="font-size:12px;color:var(--dim)">v2.6.7</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -2618,7 +2921,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.6', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.7', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -2634,6 +2937,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.6.6 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.6.7 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
