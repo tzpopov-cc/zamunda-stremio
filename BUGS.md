@@ -5,15 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-003 — a title the archive does not have returns an empty list** (owner: T-103). 25 % of all searches
-  (3 215 / 12 937; 670 titles) end in `[MISS] … 0 results` and the viewer gets nothing — not even the info
-  row a missing season or film gets (GAP). Mostly 2025–2026 releases (Spider-Man: Brand New Day 385
-  searches in 5 days, Crystal Lake, Verity, Project Hail Mary): the archive receives no new torrents.
-- **B-004 — archive rows without an infohash are dropped silently** (owner: T-103). 7,9 % of all archive
-  rows seen (11 303 / 142 784, all source `z`, mostly old SD/DVD films) carry `magnet:?xt=urn:btih:&dn=…`.
-  `extractInfohash` fails, the row is dropped, and the title reads "0 results" — e.g. "The Unbearable
-  Lightness of Being" (2 such releases). ~4 % of the zero-result searches. The archive API has no detail
-  endpoint, so the hash cannot be recovered.
 - **B-005 — Roman and Arabic numbers are different words** (owner: T-104). `matchesMovie` rejects
   "Extraction.2.2023…" for "Extraction II" (2023), "Rocky.2.1979" for "Rocky II", "Toy.Story.II.1999" for
   "Toy Story 2", "Kung.Fu.Panda.IV" for "Kung Fu Panda 4", "The.Godfather.Part.2" for "The Godfather Part
@@ -32,6 +23,15 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Closed
 
+- **B-004 — archive rows without an infohash are dropped silently** (closed by T-103). 7,9 % of all archive
+  rows seen (11 303 / 142 784, all source `z`, mostly old SD/DVD films) carry `magnet:?xt=urn:btih:&dn=…`.
+  `extractInfohash` fails, the row is dropped, and the title reads "0 results" — e.g. "The Unbearable
+  Lightness of Being" (2 such releases). ~4 % of the zero-result searches. The archive API has no detail
+  endpoint, so the hash cannot be recovered.
+- **B-003 — a title the archive does not have returns an empty list** (closed by T-103). 25 % of all searches
+  (3 215 / 12 937; 670 titles) end in `[MISS] … 0 results` and the viewer gets nothing — not even the info
+  row a missing season or film gets (GAP). Mostly 2025–2026 releases (Spider-Man: Brand New Day 385
+  searches in 5 days, Crystal Lake, Verity, Project Hail Mary): the archive receives no new torrents.
 - **B-010 — the stream cache ignores the debrid mode** (closed by T-102). `configFingerprint`
   keys on debrid, token, content, quality, sort, sources, size limit and language — not `debridmode`. A list
   built for "all" (RD + P2P rows) is served to the same token's "guaranteed" install for up to an hour, and

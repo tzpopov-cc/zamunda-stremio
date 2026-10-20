@@ -10,14 +10,16 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 - [x] **T-102** Real-Debrid: record why RD refused (error code, never the token), stop checking the rest of a
       list after an account-level refusal, and show a notice row + P2P fallback like TorBox (B-001, B-002).
       Tested against a local RD stub.
-- [ ] **T-103** A title with nothing usable in the archive gets an info row instead of an empty list: "not in
+- [x] **T-103** A title with nothing usable in the archive gets an info row instead of an empty list: "not in
       the archive" (B-003), and "in the archive, but without a download link" when every row lacks a hash
       (B-004). Logged as GAP so the dashboard counts it as told.
 - [ ] **T-104** Roman ↔ Arabic sequel numbers in search queries and in film/series matching ("II" = "2",
       "Part II" = "2") without matching unrelated titles (B-005).
 - [ ] **T-105** The "season/episode not in the archive" explanation counts only the show's own releases
       (B-006).
-- [ ] **T-106** Cinemeta: a shorter wait on the main host before the fallback (B-007).
+- [ ] **T-106** Cinemeta: a shorter wait on the main host before the fallback (B-007); a name that came from the
+      fallback host is not kept for a day (it can differ: tt0189154 "Toplo" on v3, "The Central Warmth" on
+      cinemeta-live — the archive has it only as Toplo).
 - [ ] **T-107** End of stage 1: fresh-context review → fixes → full replay (0 lost) → v2.6.8 (version strings +
       changelog + RUNBOOK) → deploy with backup → live checks → push.
 

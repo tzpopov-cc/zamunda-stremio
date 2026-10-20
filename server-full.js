@@ -2049,16 +2049,23 @@ async function resolveStreams(type, fullId, config) {
         allTorrents = allTorrents.concat(results);
     }
 
-    // Deduplicate by infohash
+    // Deduplicate by infohash. A row without one cannot be played, but it still shows the title IS in the
+    // archive — kept aside for the row that says so (B-004).
     const seen = new Set();
+    const hashless = [];
     allTorrents = allTorrents.filter(t => {
         const h = extractInfohash(t.link);
-        if (!h || seen.has(h)) return false;
+        if (!h) { hashless.push(t); return false; }
+        if (seen.has(h)) return false;
         seen.add(h);
         t._infohash = h;
         return true;
     });
     console.log(`  ${allTorrents.length} unique torrents`);
+    // Is a (hashless) row this film / this episode? The same tests the playable rows go through below.
+    const isThisTitle = t => type === 'movie'
+        ? matchesMovie(t.title, meta.name, movieYear, meta.bulgarian_name)
+        : matchesSeriesTitle(t.title, meta.name, meta.bulgarian_name) && (!season || matchesEpisode(t.title, season, episode) !== null);
 
     if (allTorrents.length === 0) {
         // An unreachable source is not the same as "this title has no torrents". Returning []
@@ -2067,8 +2074,13 @@ async function resolveStreams(type, fullId, config) {
             logEvent('DOWN', `${label} — source unavailable`);
             return unavailableStreams(config);
         }
-        logEvent('MISS', `${label} — 0 results from zamunda`);
-        return [];
+        const titleYear = movieYear || parseYear(meta.year || meta.releaseInfo);
+        if (hashless.some(isThisTitle)) {
+            logEvent('GAP', `${label} — ${hashless.length} results, all without a link [${hashless.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
+            return [noLinkRow(config, meta.name, titleYear)];
+        }
+        logEvent('GAP', `${label} — 0 results from zamunda`);
+        return [notInArchiveRow(config, meta.name, titleYear)];
     }
 
     // Episode matching for series
@@ -2193,6 +2205,7 @@ async function resolveStreams(type, fullId, config) {
             // normalizeTitle now handles — so an honest "not in the archive" row is what is left.
             console.log(`  movie match 0/${allTorrents.length} — not in archive`);
             logEvent('GAP', `${label} — ${allTorrents.length} results, none are this film [${allTorrents.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
+            if (hashless.some(isThisTitle)) return [noLinkRow(config, meta.name, movieYear)];
             const bgLang = (config.lang || 'bg') === 'bg';
             return [{
                 name: bgLang ? 'ℹ️ Няма го в архива\nZamunda BG' : 'ℹ️ Not in the archive\nZamunda BG',
@@ -2446,6 +2459,37 @@ function peerSources(torrent) {
 // A P2P row whose swarm has no seeders will not start. Once at least one row is proven alive,
 // the dead ones only push it down the list, so drop them. If none is proven alive (or the
 // scrape failed and nothing has a count), keep everything — an unknown is not a dead torrent.
+// A title the archive cannot play gets a row saying so, never an empty list (B-003, v2.6.8): until then a
+// quarter of all searches (15–20.10.2026) came back with nothing at all, which reads as a broken addon.
+// The archive stopped receiving torrents in 2026 — its size (448 023) has not moved since 07.10.2026 and
+// it holds a few 2026 releases — so a title from 2026 on is missing for that reason, and the row says it.
+const ARCHIVE_FROZEN_YEAR = 2026;
+function notInArchiveRow(config, name, year) {
+    const bg = (config.lang || 'bg') === 'bg';
+    const what = bg ? `„${name}“${year ? ` (${year})` : ''}` : `"${name}"${year ? ` (${year})` : ''}`;
+    const isNew = year && year >= ARCHIVE_FROZEN_YEAR;
+    return {
+        name: bg ? 'ℹ️ Няма го в архива\nZamunda BG' : 'ℹ️ Not in the archive\nZamunda BG',
+        title: bg
+            ? `${what} го няма в архива.${isNew ? '\nАрхивът не получава нови торенти, затова новите заглавия липсват.' : ''}`
+            : `${what} is not in the archive.${isNew ? '\nThe archive gets no new torrents, so new titles are missing.' : ''}`,
+        url: NOTICE_INFO_URL,
+    };
+}
+// The archive lists the release but without its infohash ("btih:&dn=…" — 7,9 % of its rows, old SD/DVD films
+// of source z): it cannot be played, and saying "not in the archive" would be untrue (B-004).
+function noLinkRow(config, name, year) {
+    const bg = (config.lang || 'bg') === 'bg';
+    const what = bg ? `„${name}“${year ? ` (${year})` : ''}` : `"${name}"${year ? ` (${year})` : ''}`;
+    return {
+        name: bg ? 'ℹ️ Без връзка в архива\nZamunda BG' : 'ℹ️ No link in the archive\nZamunda BG',
+        title: bg
+            ? `${what} го има в архива, но без връзка за сваляне.\nТакива торенти не могат да се пуснат.`
+            : `${what} is in the archive, but without a download link.\nSuch torrents cannot be played.`,
+        url: NOTICE_INFO_URL,
+    };
+}
+
 function dropDeadP2P(torrents) {
     const isDead = t => typeof t._seeders === 'number' && t._seeders === 0;
     const anyAlive = torrents.some(t => typeof t._seeders === 'number' && t._seeders > 0);
