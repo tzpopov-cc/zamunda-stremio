@@ -33,7 +33,11 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 
 - [x] **T-202** A name with a dotted abbreviation ("Chicago P.D.", "S.W.A.T.", "The O.C.") is also searched and
       matched in its joined form ("Chicago PD") (B-018).
-- [ ] **T-203** A release name with underscores is read like one with spaces — season packs found, no wrong
+- [x] **T-203** A release name with underscores is read like one with spaces — season packs found, no wrong
       season (B-019).
 - [ ] **T-204** Every dead end with a known reason gets a row: non-video rows leave before matching; "none carry
       the show name", "no season/episode to name" and "all under a longer name" get an honest row (B-020).
+- [ ] **T-205** „Само кеширани" with nothing cached (RD or TorBox) gets a row saying so and how to see the P2P
+      releases, instead of an empty list (B-021).
+- [ ] **T-206** A pack whose name carries no quality is not labelled 4K/1080p by its total size (B-022).
+- [ ] **T-207** A P2P pack whose known file list lacks the episode is not offered for it (B-023).

@@ -1023,8 +1023,13 @@ function declaredSeasons(t) {
     for (const m of t.matchAll(/\b(\d{1,2})(?:ST|ND|RD|TH)[\s._]*SEASON\b/g)) add(m, m[1]);
     // Anime: a bare season number right after the title, then " - " and the episode part
     // ("Kuroko's Basketball 3 - 25"). It must follow a word, not a dash (so it is not the end of
-    // a range) and have no leading zero — episode numbers do, so "01 - 12" stays a range.
-    for (const m of t.matchAll(/(?<=[A-Z'\])]\s)([1-9]\d?)(?=\s+-\s+\d)/g)) add(m, m[1]);
+    // a range) and have no leading zero — episode numbers do, so "01 - 12" stays a range. An episode
+    // part of three digits is a range or an absolute number, not a season's episode: "Boruto - Naruto
+    // Next Generations 1 - 293" is all 293 episodes, not S1E293 (seen once "_" reads as a space, v2.6.9).
+    for (const m of t.matchAll(/(?<=[A-Z'\])]\s)([1-9]\d?)(?=\s+-\s+\d{1,2}(?!\d))/g)) add(m, m[1]);
+    // The same bare season number with the year(s) between it and the episode: "Taxi Driver 3 2025-2026 E08" is
+    // season 3, episode 8 — read as season 1 it was offered for S1E8 (B-019, v2.6.9).
+    for (const m of t.matchAll(/(?<=[A-Z'\])]\s)([1-9]\d?)\s+(?:19|20)\d{2}(?:\s*[-–]\s*(?:19|20)\d{2})?(?=\s+E\d)/g)) add(m, m[1]);
     return out;
 }
 
@@ -1040,8 +1045,14 @@ function episodeSpan(rest) {
     return b >= a ? [a, b] : [a, a];
 }
 
+// One disc of a DVD set: "MACGYVER S01D05 BGAUDIO", "FRIENDS SERIES4 D1B", "The.Event.S01.D01.DVD5". It holds a few
+// episodes as unnamed .VOB files, so no file in it can be pointed at: offered as the season it played disc 1 or the
+// biggest file for every episode (B-019, v2.6.9). Still counted as the season being in the archive.
+const DVD_DISC = /\bS\d{1,2}[ ._]?D\d{1,2}[AB]?\b|\bSERIES[ ._]?\d{1,2}[ ._]D\d{1,2}[AB]?\b/i;
+
 function matchesEpisode(title, season, episode) {
     const t = title.toUpperCase();
+    if (DVD_DISC.test(t)) return null;
     const s = String(season).padStart(2, '0');
     const e = String(episode).padStart(2, '0');
     const sInt = parseInt(season);
@@ -1992,6 +2003,7 @@ function hasSeasonInfo(title) {
 // could be an episode. Not "My.Sweet.Monster.2021" for "Monster", not "Naruto - 006" (an episode
 // whose season is not stated), not "Attack.on.Titan.Part.2.2015".
 function isBareShowPack(title, name, bgName) {
+    if (DVD_DISC.test(title)) return false;
     const clean = title.replace(/\[[^\]]*\]|\([^)]*\)/g, ' ');
     if (declaredSeasons(clean.toUpperCase()).length) return false;
     const head = showNameHead(clean);
@@ -2116,6 +2128,12 @@ async function resolveStreams(type, fullId, config) {
         if (results === null) { upstreamFailed = true; continue; }
         allTorrents = allTorrents.concat(results);
     }
+
+    // "_" stands for a space in 3,9 % of archive names ("Slow_Horses_S05E05", "The_Wire_-_Season_1_-_1_2002_UHD"),
+    // but it is a word character to every season and episode pattern: "Season_2" was never read, and
+    // "Some_Show_S02_Complete" passed for S1E1 (B-019, v2.6.9). Matching reads the name with spaces, and so does the row.
+    allTorrents = allTorrents.map(t => t.title && t.title.includes('_')
+        ? { ...t, title: t.title.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim() } : t);
 
     // Deduplicate by infohash. A row without one cannot be played, but it still shows the title IS in the
     // archive — kept aside for the row that says so (B-004).

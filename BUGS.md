@@ -5,11 +5,19 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-019 — underscores in a release name hide its season** (owner: T-203). 3,9 % of archive titles use "_"
-  for spaces (300 of 7 732 in the replay cache; 104 with a season marker: "Slow_Horses_S05E05",
-  "The_Wire_-_Season_1_-_1_2002_UHD", "Mayor_of_Kingstown_S04E07"). "_" is a word character, so "Season_2" and
-  "_S02_" are not read: "Blue_Lights_-_Season_2_-_2_2024_UHD" is not offered for Blue Lights S2E3 (the viewer
-  gets nothing), and "Some_Show_S02_Complete_1080p" counts as a match for S1E1 — a wrong stream.
+- **B-023 — a P2P pack whose file list lacks the episode is still offered** (owner: T-207). Found by the T-203
+  replay: "Stranger Things S05 Vol.2 2025" — its file list (known, from itorrents) holds chapters 5–7 — is offered
+  for S5E1 with no file index, so the player opens whatever it picks. TorBox and Real-Debrid already give no link
+  for a pack that lacks the file (v2.6.7); P2P keeps the row.
+- **B-021 — "cached only" with nothing cached returns an empty list** (owner: T-205). Found by the T-201 bug hunt
+  (RD stub) and seen on live 20.10 18:49–18:50: a Real-Debrid viewer with „Само кеширани" asked for Lucifer S5E6
+  twice in 9 s, S5E4 and The Matrix Resurrections — 4 × „0 playable", 4 empty lists, no row saying why (logged as
+  RD, so the dashboard does not count them as misses). Same for TorBox. The RD stub "infringing_file" (one torrent
+  refused, not the account) ends the same way.
+- **B-022 — a season pack without a quality word is labelled by its total size** (owner: T-206). 156 of 4 534
+  series/animation rows in the replay cache: "SOUTHPARK Season 01-27" (105,94 GB) shows as 4K and sorts above real
+  1080p episodes, "Chicago PD s01" (7,08 GB, XviD by the archive text) as 1080p, "Sleepy Hollow s03" (XviD) as
+  1080p. A quality filter keeps or drops them by that guess. The size rule was written for single files.
 - **B-020 — a dead end with a known reason still returns an empty list** (owner: T-204). In the bug-hunt pass
   (361 ids on v2.6.8) 25 lists were empty: (a) a game or a music album passes as the title before the category
   filter drops it — "Haunted Hotel 2 - Believe the Lies" (game) for Haunted Hotel S2E3 instead of „Няма сезон
@@ -23,6 +31,11 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Closed
 
+- **B-019 — underscores in a release name hide its season** (found by the T-201 bug hunt, closed by T-203). 3,9 % of archive titles use "_"
+  for spaces (300 of 7 732 in the replay cache; 104 with a season marker: "Slow_Horses_S05E05",
+  "The_Wire_-_Season_1_-_1_2002_UHD", "Mayor_of_Kingstown_S04E07"). "_" is a word character, so "Season_2" and
+  "_S02_" are not read: "Blue_Lights_-_Season_2_-_2_2024_UHD" is not offered for Blue Lights S2E3 (the viewer
+  gets nothing), and "Some_Show_S02_Complete_1080p" counts as a match for S1E1 — a wrong stream.
 - **B-018 — a name with a dotted abbreviation misses the releases written without dots** (found by the T-201 bug hunt, closed by T-202). Found
   by the bug hunt in the live dashboard log (20.10 18:40): "Chicago P.D." S1E3 → „Няма сезон 1, в архива има S03",
   while the archive holds 32 rows for "Chicago PD S01" ("Chicago.PD.S01.720p.HDTV…", "Chicago PD s01"). The name

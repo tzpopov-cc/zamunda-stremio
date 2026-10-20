@@ -377,3 +377,19 @@ movie tt0083866        # E.T. the Extra-Terrestrial
 movie tt0364970        # Babylon A.D.
 movie tt0119488        # L.A. Confidential
 movie tt1616195        # J. Edgar — guard (one dotted letter)
+# T-203 underscore names and DVD discs (20.10.2026)
+series tt13759970:1:8   # Taxi Driver: "Taxi_Driver_3_…_E08" is season 3, not S1E8
+series tt13759970:3:8   # Taxi Driver S3E8
+series tt0088559:1:1   # MacGyver (1985): DVD discs "MACGYVER_S01D05"
+series tt0106179:1:1   # The X-Files: DVD discs "XFILES_S01D01"
+series tt0108778:4:1   # Friends: "FRIENDS_SERIES4_D1B" discs
+series tt0412142:4:1   # House: "HOUSE_S04D01" discs
+series tt1582459:1:1   # The Event: dotted discs "The.Event.S01.D01.DVD5"
+series tt6342474:1:1   # Boruto "1_-_293"
+series tt4574334:5:8   # Stranger Things "S05E08_FINALE"
+series tt4574334:5:1   # Stranger Things "S05_Vol.1"
+series tt5626028:8:1   # My Hero Academia "S8_Final"
+series tt13622982:3:3   # Star Wars: Visions "Season_3_-_3"
+series tt0306414:3:3   # The Wire "Season_3_-_3" (old: S3E3 only, no file)
+series tt2805096:1:2   # Chicago_PD_S01E02
+series tt5875444:5:5   # Slow_Horses_S05E05
