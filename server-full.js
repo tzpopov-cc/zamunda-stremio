@@ -954,12 +954,35 @@ function detectQuality(torrent) {
 
     // parsium found no resolution — Zamunda names are irregular, so keep the old
     // title regex and the size heuristic behind it.
-    const t = (torrent.title || '').toUpperCase();
-    if (/2160P|\b4K\b|UHD/.test(t)) return { tag: '4K', key: '4k', score: 4 };
-    if (/1080P|FHD|FULL.?HD/.test(t)) return { tag: '1080p', key: '1080p', score: 3 };
-    if (/720P/.test(t)) return { tag: '720p', key: '720p', score: 2 };
-    if (/DVDRIP|XVID|480P|\bSD\b|BDRIP|BRRIP/.test(t)) return { tag: 'SD', key: 'sd', score: 1 };
-    const gb = parseSize(torrent.size);
+    const byWords = text => {
+        const t = (text || '').toUpperCase();
+        if (/2160P|\b4K\b|UHD/.test(t)) return { tag: '4K', key: '4k', score: 4 };
+        if (/1080P|FHD|FULL.?HD/.test(t)) return { tag: '1080p', key: '1080p', score: 3 };
+        if (/720P/.test(t)) return { tag: '720p', key: '720p', score: 2 };
+        // A DVD, DivX or TV rip is standard definition whatever its size ("Carrie.2013.PAL.DVD5", 4,3 GB, read as 1080p).
+        if (/DVDRIP|XVID|DIVX|480P|\bSD\b|BDRIP|BRRIP|TVRIP|PDTV|(?<!HD[ ._-]?)\bDVD(?:R|5|9)?\b|\b[3-6]\d{2}P\b/.test(t)) return { tag: 'SD', key: 'sd', score: 1 };
+        return null;
+    };
+    const named = byWords(torrent.title);
+    if (named) return named;
+    // A pack — a season, a whole show, a collection — says nothing about one file by its total size: "SOUTHPARK
+    // Season 01-27" (105,94 GB) was labelled 4K and sorted above real 1080p episodes, "Chicago PD s01" (XviD, 7 GB)
+    // 1080p (B-022, v2.6.9). The archive text may name the quality ("Трети сезон [XviD]"), and so may the files of a
+    // file list already fetched ("Blue.Lights.S02E03…2160p…"); otherwise the quality is unknown, not guessed.
+    // A series row says what it is (an episode, a season, the whole show); only a film has its name to go by.
+    const pack = torrent._matchType ? torrent._matchType === 'season' || torrent._matchType === 'fallback'
+        : COLLECTION_NAME.test(torrent.title || '');
+    if (pack) {
+        const described = byWords(torrent.description);
+        if (described) return described;
+        const media = fileLists.get(torrent._infohash) || [];
+        const inFiles = media.length ? byWords(media[Math.floor(media.length / 2)][1]) : null;
+        return inFiles || { tag: '?', key: 'unknown', score: 0 };
+    }
+    return bySize(parseSize(torrent.size));
+}
+
+function bySize(gb) {
     if (gb > 15) return { tag: '4K', key: '4k', score: 4 };
     if (gb > 4) return { tag: '1080p', key: '1080p', score: 3 };
     if (gb > 1.5) return { tag: '720p', key: '720p', score: 2 };
@@ -1717,8 +1740,11 @@ function applyFilters(torrents, config, type) {
         t._quality = detectQuality(t);
         t._extras = detectExtras(t);
     });
+    // A row of unknown quality rides along with the chosen quality, but alone it is not "found in that quality":
+    // with T-206 more packs are unknown, and one such pack hid „Няма 720p" and the full list (The Matrix, 720p).
     if (!allQualities) {
-        filtered = filtered.filter(t => qualities.includes(t._quality.key) || t._quality.key === 'unknown');
+        const chosen = filtered.filter(t => qualities.includes(t._quality.key));
+        filtered = chosen.length ? filtered.filter(t => qualities.includes(t._quality.key) || t._quality.key === 'unknown') : [];
     }
 
     // Size limit

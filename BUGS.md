@@ -5,19 +5,30 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
+- **B-025 — a later series of the same name is offered for the earlier one** (no owner yet — needs a check
+  first). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
+  the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
+  revival filed under the old show (Twin Peaks S03 2017 under 1990–1991) would read the same way, so it is not
+  folded into T-208.
+- **B-024 — a film of the same name is offered for a series** (owner: T-208). Found by the T-201 bug hunt pass 2:
+  Carrie (2026) S1E1 → 21 rows of the 1976 and 2013 films ("Carrie.2013.1080p.BluRay", "Carrie.BDRip.XviD-WAR");
+  Below (2026) S1E1 → "Below.2002"; Tom & Jerry (1940–1967) S1E1 → "Tom.and.Jerry.2021.MULTi.COMPLETE.BLURAY".
+  The first two come from the "bare show name" fallback; the third reads "COMPLETE" (a full Blu-ray disc) as a
+  complete-series pack.
+
 - **B-023 — a P2P pack whose file list lacks the episode is still offered** (owner: T-207). Found by the T-203
   replay: "Stranger Things S05 Vol.2 2025" — its file list (known, from itorrents) holds chapters 5–7 — is offered
   for S5E1 with no file index, so the player opens whatever it picks. TorBox and Real-Debrid already give no link
   for a pack that lacks the file (v2.6.7); P2P keeps the row.
-- **B-022 — a season pack without a quality word is labelled by its total size** (owner: T-206). 156 of 4 534
-  series/animation rows in the replay cache: "SOUTHPARK Season 01-27" (105,94 GB) shows as 4K and sorts above real
-  1080p episodes, "Chicago PD s01" (7,08 GB, XviD by the archive text) as 1080p, "Sleepy Hollow s03" (XviD) as
-  1080p. A quality filter keeps or drops them by that guess. The size rule was written for single files.
 - **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
   answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-022 — a season pack without a quality word is labelled by its total size** (found by the T-201 bug hunt, closed by T-206). 156 of 4 534
+  series/animation rows in the replay cache: "SOUTHPARK Season 01-27" (105,94 GB) shows as 4K and sorts above real
+  1080p episodes, "Chicago PD s01" (7,08 GB, XviD by the archive text) as 1080p, "Sleepy Hollow s03" (XviD) as
+  1080p. A quality filter keeps or drops them by that guess. The size rule was written for single files.
 
 - **B-021 — "cached only" with nothing cached returns an empty list** (found by the T-201 bug hunt, closed by T-205). Found by the T-201 bug hunt
   (RD stub) and seen on live 20.10 18:49–18:50: a Real-Debrid viewer with „Само кеширани" asked for Lucifer S5E6
