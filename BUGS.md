@@ -9,11 +9,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   replay: "Stranger Things S05 Vol.2 2025" — its file list (known, from itorrents) holds chapters 5–7 — is offered
   for S5E1 with no file index, so the player opens whatever it picks. TorBox and Real-Debrid already give no link
   for a pack that lacks the file (v2.6.7); P2P keeps the row.
-- **B-021 — "cached only" with nothing cached returns an empty list** (owner: T-205). Found by the T-201 bug hunt
-  (RD stub) and seen on live 20.10 18:49–18:50: a Real-Debrid viewer with „Само кеширани" asked for Lucifer S5E6
-  twice in 9 s, S5E4 and The Matrix Resurrections — 4 × „0 playable", 4 empty lists, no row saying why (logged as
-  RD, so the dashboard does not count them as misses). Same for TorBox. The RD stub "infringing_file" (one torrent
-  refused, not the account) ends the same way.
 - **B-022 — a season pack without a quality word is labelled by its total size** (owner: T-206). 156 of 4 534
   series/animation rows in the replay cache: "SOUTHPARK Season 01-27" (105,94 GB) shows as 4K and sorts above real
   1080p episodes, "Chicago PD s01" (7,08 GB, XviD by the archive text) as 1080p, "Sleepy Hollow s03" (XviD) as
@@ -24,6 +19,11 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Closed
 
+- **B-021 — "cached only" with nothing cached returns an empty list** (found by the T-201 bug hunt, closed by T-205). Found by the T-201 bug hunt
+  (RD stub) and seen on live 20.10 18:49–18:50: a Real-Debrid viewer with „Само кеширани" asked for Lucifer S5E6
+  twice in 9 s, S5E4 and The Matrix Resurrections — 4 × „0 playable", 4 empty lists, no row saying why (logged as
+  RD, so the dashboard does not count them as misses). Same for TorBox. The RD stub "infringing_file" (one torrent
+  refused, not the account) ends the same way.
 - **B-020 — a dead end with a known reason still returns an empty list** (found by the T-201 bug hunt, closed by T-204). In the bug-hunt pass
   (361 ids on v2.6.8) 25 lists were empty: (a) a game or a music album passes as the title before the category
   filter drops it — "Haunted Hotel 2 - Believe the Lies" (game) for Haunted Hotel S2E3 instead of „Няма сезон

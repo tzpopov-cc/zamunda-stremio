@@ -2505,6 +2505,12 @@ async function resolveStreams(type, fullId, config) {
         }
 
         console.log(`  → ${tbStreams.length} playable in ${elapsed}s`);
+        if (!tbStreams.length) {
+            logEvent('GAP', `${label} — TorBox: 0 of ${filtered.length} cached in ${elapsed}s (cached only)`);
+            const out = [...hints, notCachedRow(config, 'TorBox', filtered.length)];
+            out._noCache = true;
+            return out;
+        }
         logEvent('TB', `${tbStreams.length} playable in ${elapsed}s — "${meta.name}"`);
         return [...hints, ...tbStreams];
     }
@@ -2563,6 +2569,13 @@ async function resolveStreams(type, fullId, config) {
         }
 
         console.log(`  → ${rdStreams.length} playable in ${elapsed}s${refusedNote}`);
+        // „Само кеширани" and not one link: say so (B-021). Not cached either — Real-Debrid may have it in a minute.
+        if (!rdStreams.length && !accountProblem) {
+            logEvent('GAP', `${label} — RD: 0 of ${filtered.length} cached in ${elapsed}s (cached only)${refusedNote}`);
+            const out = [...hints, notCachedRow(config, 'Real-Debrid', filtered.length)];
+            out._noCache = true;
+            return out;
+        }
         logEvent('RD', `${rdStreams.length} playable in ${elapsed}s — "${meta.name}"${refusedNote}`);
         return partial([...hints, ...rdStreams, ...(accountProblem ? [rdNotice(accountProblem.kind, config, 0)] : [])]);
     }
@@ -2594,6 +2607,19 @@ function peerSources(torrent) {
     } catch (e) { /* malformed magnet — the default list still applies */ }
     const trackers = [...new Set([...own, ...PEER_TRACKERS])];
     return [...trackers.map(t => `tracker:${t}`), `dht:${torrent._infohash}`];
+}
+
+// „Само кеширани" and none of the releases plays at once on the viewer's service: until v2.6.9 an empty list, which
+// a viewer read as a broken addon and asked again (Lucifer S5E6 twice in 9 s, 20.10.2026) (B-021).
+function notCachedRow(config, service, n) {
+    const bg = (config.lang || 'bg') === 'bg';
+    return {
+        name: bg ? 'ℹ️ Няма кеширани\nZamunda BG' : 'ℹ️ Nothing cached\nZamunda BG',
+        title: bg
+            ? `${service} не може да пусне веднага ${n === 1 ? 'единствения торент' : `нито един от ${n} торента`}.\nС „Кеширани + P2P“ в настройките ще ги виждаш и като P2P.`
+            : `${service} cannot play ${n === 1 ? 'the only torrent' : `any of the ${n} torrents`} right away.\nWith "Cached + P2P" in the settings you will see them as P2P too.`,
+        url: NOTICE_INFO_URL,
+    };
 }
 
 // A title the archive cannot play gets a row saying so, never an empty list (B-003, v2.6.8): until then a
