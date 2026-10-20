@@ -5,6 +5,25 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
+- **B-034 — an older season of a long show is called missing when its only pack is a multi-season one** (owner:
+  T-218). Found by the T-201 bug hunt pass 4 (live searches 20.10 21:01 – 21.10 ~02:00 UTC): the season is looked
+  for as "<name>" (the newest 50 rows) and "<name> S04"; a pack named "S01-16" or "Season 01-15" is in neither.
+  Grey's Anatomy S4E1 → „Няма сезон 4" while "Greys.Anatomy.S01-16.WEBRip.x264-ION10" (147,46 GB) answers "Grey's
+  Anatomy Season 4"; NCIS S2E3 → „Няма сезон 2" while "NCIS - Season 01-15" (110,48 GB) answers "NCIS Season 2";
+  Joey S1E23/E24 → „Не е намерен" while "Joey Season 1 [BGAudio.TVRip]-Planet" (3,93 GB, BG audio) answers "Joey
+  Season 1".
+- **B-036 — a season the archive has only without a link is called missing** (owner: T-219). Found by the T-201 bug
+  hunt pass 4: The Simpsons S9 — the only season-9 releases are "The Simpsons season 1-18 complete" and "Simpsons
+  Seasons 00-19", both without an infohash; the viewer is told „Няма сезон 9" (the season is not in the archive)
+  instead of „Без връзка в архива" (B-004's row). The same for Grey's Anatomy S04 ("Greys.Anatomy.S04.DVDRip", no
+  infohash) until B-034 surfaced the playable pack.
+- **B-037 — an anime whose archive name joins its hyphenated words is called missing** (deferred — the fix alone
+  offers a wrong file). Found by the T-201 bug hunt pass 4: Mushi-Shi S1E11 → „Няма го в архива"; the archive has
+  "[YSAnime] Mushishi [BDRip H.264 1920x1080 AAC]" (14,17 GB) and "[RyuKo]Mushishi" (8,10 GB). Kitsu's romaji name
+  is "Mushishi", one word, and `animeAltNames` skips one-word names ("KuroBas" would match anything). Tried on a
+  scratch copy (one-word names allowed when they are the show's own words joined): S1E1 gets both packs, S2E3
+  "Mushishi S2", but S1E11 gets "[GFotaku&EasternSpirit] Mushishi 2 Special (11-12)" — season 2's specials read as
+  season 1's episodes 11–12 (the "2" after the name is not read as a season). Needs that read first.
 - **B-025 — a later series of the same name is offered for the earlier one** (no owner yet — needs a check
   first). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
   the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
@@ -16,6 +35,10 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-035 — a season list "Season 1,2,3" is read as season 1 only** (found by the T-201 bug hunt pass 4, closed by T-217):
+  "NCIS Season 1,2,3 DVDRip-TVRip BGAudio DivX-bbb" is on the first page of "NCIS", but `declaredSeasons` reads
+  "Season 1" and stops at the comma, so the BG-audio pack is not offered for seasons 2 and 3. 1 of 13 682 names in
+  the replay cache lists seasons this way ("S01+S02+Movie" is read right already).
 - **B-033 — a config with a broken "%" sequence answers with a stack trace or not at all** (found by the T-201 bug hunt pass 3, closed by T-216):
   the config segment is decoded twice (Express, then the route); one that decodes to a bad
   "%" sequence ("…tbtoken%3Dab%25zz…") makes `decodeURIComponent` throw — the manifest answers 500 with an HTML stack

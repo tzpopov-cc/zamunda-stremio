@@ -1092,6 +1092,12 @@ function detectExtras(torrent) {
     return legacy;
 }
 
+// The next number of a season list: ", 2", " & 3", "+4", " AND 5", " И 6" ("Season 1, 2019" and "Season 2, Episode 5"
+// are not lists).
+const LIST_NEXT = String.raw`[\s._]*(?:[,&+]|\bAND\b|(?<!\p{L})И(?!\p{L}))[\s._]*\d{1,2}(?!\d)`;
+const SEASON_LIST = new RegExp(String.raw`(?:SEASONS?|СЕЗОНИ?)[\s._]*\d{1,2}(?!\d)(?:${LIST_NEXT})+`, 'gu');
+const SEASON_ONE = new RegExp(String.raw`(?:SEASON|СЕЗОН)[\s._]*(\d{1,2})(?!\d)(?![-–]\d)(?!${LIST_NEXT})`, 'gu');
+
 // Seasons a release names without an SxxEyy, each with the text after it (empty for a range,
 // which is a pack of all its seasons). `t` is upper-cased. "S03E05" is not here — an exact
 // episode is matched before this is consulted.
@@ -1104,7 +1110,9 @@ function declaredSeasons(t) {
         const from = parseInt(m[1] || m[3]), to = parseInt(m[2] || m[4]);
         for (let n = from; n <= to && to - from < 50; n++) out.push({ season: n, rest: '' });
     }
-    for (const m of t.matchAll(/(?:SEASON|СЕЗОН)[\s._]*(\d{1,2})(?!\d)(?![-–]\d)/g)) add(m, m[1]);
+    // A list of seasons is a pack of each: "NCIS Season 1,2,3 DVDRip-TVRip BGAudio" was season 1 only (B-035, v2.6.9).
+    for (const m of t.matchAll(SEASON_LIST)) for (const n of m[0].match(/\d{1,2}(?!\d)/g)) out.push({ season: parseInt(n), rest: '' });
+    for (const m of t.matchAll(SEASON_ONE)) add(m, m[1]);
     for (const m of t.matchAll(/\b(\d{1,2})(?:ST|ND|RD|TH)[\s._]*SEASON\b/g)) add(m, m[1]);
     // Anime: a bare season number right after the title, then " - " and the episode part
     // ("Kuroko's Basketball 3 - 25"). It must follow a word, not a dash (so it is not the end of
