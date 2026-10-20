@@ -1920,12 +1920,20 @@ function namesAnotherShow(title, toks) {
     const parts = title.split(/\s[+&\/|]\s|,\s*|\baka\b/i);
     if (parts.length > 1 && parts.some(p => isJustTheName(showNameHead(p), toks))) return false;
     const head = showNameHead(title);
-    let end = -1;
-    for (const t of toks) {
-        const i = head.indexOf(t);
-        if (i < 0) return false;   // the name is not in the title part — cannot judge, keep it
-        end = Math.max(end, i);
+    const missing = toks.filter(t => !head.includes(t));
+    if (missing.length) {
+        // Part of the name sits outside the name part. Another show when that part names something of its
+        // own: "Fire Country S02E06 Alert the Sheriff" came back for Sheriff Country S2E2 and filled the
+        // "available" seasons with Fire Country's (B-006, v2.6.8). Cannot judge — keep it — when a missing
+        // word is a number (the name part stops at one: "1923", "Mob Psycho 100", "Henry VIII"), stands in
+        // brackets ("Sousou no Frieren (Frieren Beyond Journey's End) - 05"), or the name part holds nothing
+        // but name words ("Spartacus.S01E01.Blood.and.Sand").
+        if (missing.some(t => /^\d+$/.test(t))) return false;
+        const bracketed = new Set(normalizeTitle((title.match(/\[[^\]]*\]|\([^)]*\)/g) || []).join(' ')).split(' '));
+        if (missing.some(t => bracketed.has(t))) return false;
+        return head.some(w => !toks.includes(w) && !neutralWord(w));
     }
+    const end = Math.max(...toks.map(t => head.indexOf(t)));
     return head.slice(end + 1).some(w => !neutralWord(w));
 }
 
@@ -2149,9 +2157,18 @@ async function resolveStreams(type, fullId, config) {
             // "Tales.of.the.Walking.Dead") but sometimes the same one under a longer title
             // ("Special.Ops.Lioness" for Lioness). So they stay only when nothing for this
             // episode carries the name plainly.
-            const plain = matched.filter(t => namePrefix(t.title, nameTokens(nameOf(t) || meta.name)).length === 0);
+            const prefixOf = t => namePrefix(t.title, nameTokens(nameOf(t) || meta.name)).join(' ');
+            const plain = matched.filter(t => !prefixOf(t));
             if (plain.length && plain.length < matched.length) {
                 console.log(`  ${matched.length - plain.length} dropped: other words before the show name`);
+            }
+            // Nothing plain: the longer name is this show under a former title only when every release carries the
+            // same one, more than once ("Special.Ops.Lioness" ×11 for Lioness). Otherwise they are other shows:
+            // "Chief of War", "Bleach Thousand-Year Blood War", "Queen Love and War" for War; "Brews.Brothers" for
+            // Brothers (replay 20.10.2026, v2.6.8).
+            if (!plain.length && (new Set(matched.map(prefixOf)).size > 1 || matched.length < 2)) {
+                logEvent('MISS', `${label} — ${matched.length} episode matches, all under a longer name [${matched.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
+                return [];
             }
             allTorrents = plain.length ? plain : matched;
         } else {

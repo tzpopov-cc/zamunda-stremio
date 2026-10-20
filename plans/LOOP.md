@@ -47,3 +47,4 @@ After the log review of 20.10.2026 (docker logs 15–20.10, 12 937 searches — 
 - 20.10.2026: T-102 ✅ — RD says why it refused, stops after 2 calls, notice + P2P (B-001, B-002); found and fixed B-010 (cache ignored debrid mode); replay compares RD rows. Next T-103.
 - 20.10.2026: T-103 ✅ — no more empty lists for titles the archive lacks (B-003, B-004); replay 361: 0 lost, 51 new info rows. Found: Cinemeta fallback can name a film differently (→ T-106). Next T-104.
 - 20.10.2026: T-104 ✅ — sequel numbers both ways (B-005): "Extraction II" finds "Extraction.2"; replay 361: 0 lost, 23 gained, all the right film. X (2022) unsearchable (one-letter word). Next T-105.
+- 20.10.2026: T-105 ✅ — a release of another show no longer counts as the show (B-006): Sheriff Country S2 → „Няма сезон 2"; War / Brothers no longer get other shows (old: up to 32 wrong rows); replay 361: 0 gained, 52 lost, all other shows. Next T-106.

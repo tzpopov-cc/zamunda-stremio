@@ -15,7 +15,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       (B-004). Logged as GAP so the dashboard counts it as told.
 - [x] **T-104** Roman ↔ Arabic sequel numbers in search queries and in film/series matching ("II" = "2",
       "Part II" = "2") without matching unrelated titles (B-005).
-- [ ] **T-105** The "season/episode not in the archive" explanation counts only the show's own releases
+- [x] **T-105** The "season/episode not in the archive" explanation counts only the show's own releases
       (B-006).
 - [ ] **T-106** Cinemeta: a shorter wait on the main host before the fallback (B-007); a name that came from the
       fallback host is not kept for a day (it can differ: tt0189154 "Toplo" on v3, "The Central Warmth" on
