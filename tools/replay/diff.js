@@ -10,7 +10,8 @@ for (const [k, o] of O) {
     if (o.error || n.error) errs.push(`${k} old:${o.error || 'ok'} new:${n.error || 'ok'}`);
     const rows = r => new Map(r.streams.filter(s => s.infoHash).map(s => [s.infoHash, s]));
     const ro = rows(o), rn = rows(n);
-    const infoOf = r => r.streams.filter(s => !s.infoHash && !s.url).map(s => s.name.split(' | ')[0]).join(', ');
+    // An info row is any stream without an infoHash: notice rows carry a url to notice-*.mp4 (since v2.1.6).
+    const infoOf = r => r.streams.filter(s => !s.infoHash).map(s => s.name.split(' | ')[0]).join(', ');
     let changed = false;
     for (const [h, s] of ro) if (!rn.has(h)) { lost.push(`${k}  ${s.title}`); changed = true; }
     for (const [h, s] of rn) if (!ro.has(h)) { gained.push(`${k}  ${s.title}`); changed = true; }

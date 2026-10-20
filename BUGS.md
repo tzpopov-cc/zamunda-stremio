@@ -38,10 +38,9 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 - **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
   answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
-- **B-009 — the replay hides info-row changes** (owner: T-101). `tools/replay/diff.js` counts as info rows
-  only streams with neither `infoHash` nor `url`, but every notice row has a `url` (`notice-info.mp4`)
-  since v2.1.6 — so a new or lost info row never shows in the diff.
 
 ## Closed
 
-(none yet)
+- **B-009 — the replay hides info-row changes** (closed by T-101). `tools/replay/diff.js` counts as info rows
+  only streams with neither `infoHash` nor `url`, but every notice row has a `url` (`notice-info.mp4`)
+  since v2.1.6 — so a new or lost info row never shows in the diff.

@@ -43,3 +43,4 @@ After the log review of 20.10.2026 (docker logs 15–20.10, 12 937 searches — 
 ## Log
 
 - 20.10.2026: loop set up. Bugs B-001…B-009 from the log review; stage 1 = T-101…T-107, stage 2 = T-201.
+- 20.10.2026: T-101 ✅ — the replay shows info rows; 23 targeted ids. Baseline shows B-003…B-006. Next T-102.

@@ -341,3 +341,27 @@ series tt14466018:1:1
 series tt14466018:2:3
 series tt3032476:1:1
 series tt3032476:2:3
+# 20.10.2026 log review (T-101): targets of B-003…B-006 and guards
+movie tt12263384       # Extraction II — archive has "Extraction.2.2023" (B-005)
+movie tt0091326        # The Karate Kid Part II — archive "The Karate Kid 2 (1986) [BG Audio]" (B-005)
+movie tt0097647        # The Karate Kid Part III (B-005)
+movie tt0079817        # Rocky II (B-005)
+movie tt0071562        # The Godfather Part II (B-005)
+movie tt21692408       # Kung Fu Panda 4 (B-005)
+movie tt9218128        # Gladiator II — guard
+movie tt0089927        # Rocky IV — guard
+movie tt0076759        # Star Wars: Episode IV — guard
+movie tt4520988        # Frozen II — guard
+movie tt0434409        # V for Vendetta — guard: a lone V is not 5
+movie tt13560574       # X (2022) — guard: a lone X is not 10
+movie tt0096332        # The Unbearable Lightness of Being — only hashless rows (B-004)
+movie tt22084616       # Spider-Man: Brand New Day — not in the archive (B-003)
+movie tt32261958       # Verity (2026) (B-003)
+movie tt12042730       # Project Hail Mary (B-003)
+movie tt27369017       # Hope (2026) — "none are this film" row stays
+series tt32268630:2:2  # Sheriff Country S2E2 — stray "Fire Country S02E06" (B-006)
+series tt32268630:1:5  # Sheriff Country S1E5 — guard
+series tt23148340:1:1  # Crystal Lake (B-003)
+series tt11794812:2:5  # Cross S2E5 (B-006)
+series tt7678620:1:5   # Bluey S1E5 — bare pack resolved per episode (guard)
+series tt31510819:2:4  # MobLand S2E4 — season missing, row stays (guard)
