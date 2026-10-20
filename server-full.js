@@ -3087,11 +3087,19 @@ app.get('/', (req, res) => { incr('configPage'); incrDaily('pageViews'); res.typ
 app.get('/configure', (req, res) => res.redirect('/'));
 app.get('/:config/configure', (req, res) => res.redirect('/'));
 
+// The config segment as settings, or null when it cannot be decoded. Express has decoded it once; a segment that then
+// holds a bad "%" sequence ("…tbtoken%3Dab%25zz…") made the second decode throw: the manifest answered 500 with a stack
+// trace naming the server's files, and a TorBox play request was never answered (B-033, v2.6.9).
+function configOf(req) {
+    try { return parseConfig(decodeURIComponent(req.params.config)); } catch (e) { return null; }
+}
+
 // Manifest
 app.get('/manifest.json', (req, res) => { incr('installs'); res.json(buildManifest(DEFAULTS)); });
 app.get('/:config/manifest.json', (req, res) => {
+    const config = configOf(req);
+    if (!config) return res.status(400).type('text/plain').send('bad config link');
     incr('installs');
-    const config = parseConfig(decodeURIComponent(req.params.config));
     trackUser(req, config);
     trackMigration(req, config);
     res.json(buildManifest(config));
@@ -3101,7 +3109,8 @@ app.get('/:config/manifest.json', (req, res) => {
 app.get('/:config/stream/:type/:id.json', async (req, res) => {
     incr('streams'); incrDaily('streams');
     try {
-        const config = parseConfig(decodeURIComponent(req.params.config));
+        const config = configOf(req);
+        if (!config) return res.json({ streams: [] });
         trackRequest(trackUser(req, config));
         const { type, id } = req.params;
         if (!['movie', 'series'].includes(type)) return res.json({ streams: [] });
@@ -3132,10 +3141,10 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
 // TorBox play — where a TorBox row points (see tbPlay). Stremio follows the redirect to the file. A
 // made link is reused for TB_LINK_TTL, so pausing and resuming does not add the torrent again.
 app.get('/:config/play/tb/:type/:id/:hash', async (req, res) => {
-    const config = parseConfig(decodeURIComponent(req.params.config));
+    const config = configOf(req);
     const { type, id } = req.params;
     const hash = req.params.hash.toLowerCase();
-    if (!config.tbtoken || !['movie', 'series'].includes(type) || !/^tt\d+(:\d+:\d+)?$/.test(id) || !/^[a-f0-9]{40}$/.test(hash)) {
+    if (!config || !config.tbtoken || !['movie', 'series'].includes(type) || !/^tt\d+(:\d+:\d+)?$/.test(id) || !/^[a-f0-9]{40}$/.test(hash)) {
         return res.status(400).type('text/plain').send('bad play link');
     }
     const key = `tbplay:${crypto.createHash('md5').update(config.tbtoken).digest('hex').substring(0, 8)}:${hash}:${id}`;
@@ -3435,6 +3444,16 @@ app.get('/logs', adminAuth, async (req, res) => {
 });
 
 app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.8', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+
+// Last: an error Express raises itself (a path it cannot decode, "/%zz/manifest.json") or a route throws gets a plain
+// answer. Express's own page shows the stack trace with the server's file paths (B-033, v2.6.9).
+app.use((err, req, res, next) => {
+    // Not the message: Express's "Failed to decode param '…'" quotes the config, token and all.
+    const status = err.status >= 400 && err.status < 500 ? err.status : 500;
+    console.error(`Request error: ${status} ${err.name || 'Error'}`);
+    if (res.headersSent) return next(err);
+    res.status(status).type('text/plain').send(status < 500 ? 'bad request' : 'server error');
+});
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
