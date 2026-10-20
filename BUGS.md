@@ -11,6 +11,21 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Closed
 
+- **B-011 — roman numerals reached the show-name head** (found by the T-107 review, closed by T-107).
+  Folded to a bare number, "III" ended the head like an episode number: "Lupin.III.Part.6.S01E05" passed for
+  Lupin (2021), "Overlord IV - 05" for Overlord S1E5, "Final.Fantasy.VII.Remake" for Final Fantasy. Introduced by
+  T-104, never deployed.
+- **B-012 — an RD refusal mid-list was silent and cached** (T-107 review, closed by T-107). After ≥1 link
+  resolved, an account-level refusal skipped the rest without a notice and the short list was kept 1 h.
+- **B-013 — the longer-name path could still serve another show** (T-107 review, closed by T-107): two
+  qualities of "Chief.of.War.S01E09" would pass for War. Now the show must also be in the results under its own
+  name.
+- **B-014 — a list built on Cinemeta's fallback name was cached 1 h** (T-107 review, closed by T-107).
+- **B-015 — the TorBox auth notice name was Bulgarian with lang=en** (T-102 note, closed by T-107).
+- **B-016 — `RD_API` could be redirected by an env variable** (T-107 review, closed by T-107): unused by the
+  replay, and an env could send the RD token to another host.
+- **B-017 — "Original.Title.S01E05.English.Title" is rejected** (T-107 review, ACCEPTED): the price of rejecting
+  episode-title strays; an honest miss, anime season 1 rescued by romaji names; no right row lost in the replay.
 - **B-007 — a slow Cinemeta costs the viewer 5 s** (closed by T-106). 220 timeouts in 5 days (1,7 % of
   searches), clustered 17–20 UTC (the Bulgarian evening); the fallback host answers, but only after the 5 s
   timeout of the first. Measured 20.10: the main host answers in 12 ms (median), the fallback names 7 % of titles differently
