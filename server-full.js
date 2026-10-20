@@ -2073,14 +2073,31 @@ function namesAnotherShow(title, toks) {
     }
     // Where the name ends: after its words standing together, so a repeated word ends where the name does — "Hunter x
     // Hunter - 01" ends at the second "hunter"; read from the first, " x hunter" looked like another show's words
-    // (B-026, v2.6.9). Scattered words keep the furthest first occurrence: "Eden of the East … King of Eden" is not
-    // East of Eden.
+    // (B-026, v2.6.9). Then the words in order with only neutral words between ("Law and Order Special Victims Unit").
+    // In another order they are another name: "[RyuKo-JB] Eden of the East 01-11" was offered for East of Eden (B-029,
+    // v2.6.9).
     const bare = head.map((w, i) => [w, i]).filter(([w]) => !TITLE_STOPWORDS.has(w));
     let end = -1;
     for (let p = 0; end < 0 && p + toks.length <= bare.length; p++)
         if (toks.every((t, k) => bare[p + k][0] === t)) end = bare[p + toks.length - 1][1];
-    if (end < 0) end = Math.max(...toks.map(t => head.indexOf(t)));
+    if (end < 0) end = nameEnd(head, toks);
+    if (end < 0) return true;
     return head.slice(end + 1).some(w => !neutralWord(w));
+}
+
+// Where the name ends in a release's name part when its words stand in order, each after the one before with only
+// neutral words between them (anything may come before the first); -1 when they do not.
+function nameEnd(head, toks) {
+    for (let start = 0; start < head.length; start++) {
+        if (head[start] !== toks[0]) continue;
+        let i = start, k = 1;
+        for (let j = start + 1; k < toks.length && j < head.length; j++) {
+            if (head[j] === toks[k]) { i = j; k++; }
+            else if (!neutralWord(head[j])) break;
+        }
+        if (k === toks.length) return i;
+    }
+    return -1;
 }
 
 // Words before the show name in a release's name part: "fuller" in "Fuller.House.S01" for House,
@@ -2101,7 +2118,8 @@ function namePrefix(title, toks) {
 // The head is the show name and nothing else but neutral words — no prefix, no suffix.
 function isJustTheName(head, toks) {
     return toks.length > 0 && head.length > 0
-        && toks.every(t => head.includes(t)) && head.every(w => toks.includes(w) || neutralWord(w));
+        && toks.every(t => head.includes(t)) && head.every(w => toks.includes(w) || neutralWord(w))
+        && nameEnd(head, toks) >= 0;
 }
 
 // Whether a release states a season or an episode at all.

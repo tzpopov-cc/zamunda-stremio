@@ -5,10 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-029 — a show name's words in another order pass the show check** (owner: T-212). Found by the T-211 replay:
-  "[RyuKo-JB] Eden of the East 01-11 + Movies" (an anime) is offered for East of Eden (2026) S1E1. When the name's
-  words do not stand together, the show check falls back to the old rule (the furthest first word) and accepts
-  "eden … east" for "east … eden".
 - **B-025 — a later series of the same name is offered for the earlier one** (no owner yet — needs a check
   first). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
   the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
@@ -20,6 +16,11 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-029 — a show name's words in another order pass the show check** (found by the T-211 replay, closed by T-212):
+  "[RyuKo-JB] Eden of the East 01-11 + Movies" (an anime) is offered for East of Eden (2026) S1E1. When the name's
+  words do not stand together, the show check falls back to the old rule (the furthest first word) and accepts
+  "eden … east" for "east … eden".
+
 - **B-028 — an episode range that names no season is offered for every season** (found by the T-210 check, closed by
   T-211). "[SFS] Hunter x Hunter - 01 - 21 (Hunter Exam Arc)" (season-1 episodes) was offered for S2E3 and S3E5,
   and "Alice in Borderland S01E01-02" for S2E1: the season-less range patterns read "01 - 21" and the "01-02" inside

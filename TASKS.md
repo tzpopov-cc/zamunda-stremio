@@ -48,5 +48,5 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       capped and cached) before the title is called missing (B-027).
 - [x] **T-211** An episode range that names no season ("01 - 21", "1-293") counts for season 1 only, like the
       absolute episode numbers (B-028). Before T-210, which reaches such packs for later seasons.
-- [ ] **T-212** A show name's words in another order ("Eden of the East" for East of Eden) do not pass the show
+- [x] **T-212** A show name's words in another order ("Eden of the East" for East of Eden) do not pass the show
       check (B-029).
