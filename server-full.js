@@ -2180,8 +2180,11 @@ function matchesMovie(title, name, year, bgName, description) {
     const years = torrentYears(title);
     if (year && years.length) {
         // Torrent states a year: it must be the right one (±1 for prod/release drift).
-        // This rejects both sequels (different year) and same-name remakes.
-        if (!years.some(y => Math.abs(y - year) <= 1)) return false;
+        // This rejects both sequels (different year) and same-name remakes. A long name (four words or more) matched
+        // exactly may be two years off: Cinemeta dates "The Witch: Part 1 - The Subversion" 2020 (a later release),
+        // the film and its release are 2018 (B-030, v2.6.9). Short names keep ±1 — "The Godfather (1974)" is Part II.
+        const slack = exact && headTokens(name).length >= 4 ? 2 : 1;
+        if (!years.some(y => Math.abs(y - year) <= slack)) return false;
         // With the year confirmed, the title before a colon is enough: "Léon: The Professional"
         // is released as "Leon.1994…" in Europe. Never without a year — "Avatar" alone must not
         // match "Avatar: Fire and Ash".
