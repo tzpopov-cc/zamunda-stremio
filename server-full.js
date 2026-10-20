@@ -1825,6 +1825,14 @@ function plainNumberQuery(q) {
 function normalizeTitle(s) {
     return foldSequel(normalizeWords(s));
 }
+// Cinemeta writes abbreviations with dots ("Chicago P.D.", "S.W.A.T.", "The O.C."), most releases without
+// ("Chicago.PD.S01.720p…"), and the dots split the name into one-letter words that never meet "pd": all 18
+// Chicago P.D. searches of 15–20.10.2026 failed (B-018, v2.6.9). The joined form is one of the title's own
+// names; null when there is no run of two or more dotted letters ("J. Edgar" stays).
+function joinedAbbrev(name) {
+    const out = (name || '').replace(/(?<![\p{L}\p{N}])(?:\p{L}\.){2,}/gu, m => m.replace(/\./g, '')).trim();
+    return out && out !== (name || '').trim() ? out : null;
+}
 function normalizeWords(s) {
     return ((s || '')
         .normalize('NFD').replace(/[̀-ͯ]/g, '')   // é→e (also й→и — harmless, both sides fold)
@@ -2056,6 +2064,8 @@ async function resolveStreams(type, fullId, config) {
 
     // Build search queries — for series, search with season/episode patterns too
     // because zamunda API returns max 20 results per query
+    const joined = joinedAbbrev(meta.name);
+    const ownNames = joined ? [meta.name, joined] : [meta.name];
     const queries = [meta.name];
     if (meta.bulgarian_name) queries.push(meta.bulgarian_name);
     const altNames = type === 'series' ? await animeAltNames(imdbId, meta) : [];
@@ -2069,6 +2079,12 @@ async function resolveStreams(type, fullId, config) {
         queries.push(`${meta.name} S${s}`);
         // Search "Friends S01E05" for the specific episode
         if (e) queries.push(`${meta.name} S${s}E${e}`);
+    }
+
+    // Dotted abbreviations both ways (B-018): "Chicago P.D. S01" is in the archive as "Chicago PD S01".
+    if (joined) for (const q of [...queries]) {
+        const j = q.includes(meta.name) ? q.replace(meta.name, joined) : null;
+        if (j && !queries.includes(j)) queries.push(j);
     }
 
     // Sequel numbers both ways (B-005): "The Karate Kid Part II" is in the archive as "The Karate Kid 2".
@@ -2116,8 +2132,8 @@ async function resolveStreams(type, fullId, config) {
     console.log(`  ${allTorrents.length} unique torrents`);
     // Is a (hashless) row this film / this episode? The same tests the playable rows go through below.
     const isThisTitle = t => type === 'movie'
-        ? matchesMovie(t.title, meta.name, movieYear, meta.bulgarian_name)
-        : matchesSeriesTitle(t.title, meta.name, meta.bulgarian_name) && (!season || matchesEpisode(t.title, season, episode) !== null);
+        ? ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name))
+        : ownNames.some(n => matchesSeriesTitle(t.title, n, meta.bulgarian_name)) && (!season || matchesEpisode(t.title, season, episode) !== null);
 
     if (allTorrents.length === 0) {
         // An unreachable source is not the same as "this title has no torrents". Returning []
@@ -2145,9 +2161,9 @@ async function resolveStreams(type, fullId, config) {
         // The show's own names, then its romaji ones. A release found ONLY by a romaji name is season 1
         // unless it says otherwise: each later season has a romaji name of its own ("Kuroko no Basket
         // 2nd Season"), so "Kuroko no Basket (2012) (Complete)" is not seasons 2 and 3.
-        const names = [meta.name, ...altNames];
+        const names = [...ownNames, ...altNames];
         const nameOf = t => names.find(n => matchesSeriesTitle(t.title, n, meta.bulgarian_name));
-        const byAltOnly = t => nameOf(t) !== meta.name && !matchesSeriesTitle(t.title, meta.name, meta.bulgarian_name);
+        const byAltOnly = t => !ownNames.includes(nameOf(t)) && !ownNames.some(n => matchesSeriesTitle(t.title, n, meta.bulgarian_name));
         const altSeasonOk = t => {
             const declared = declaredSeasons(t.title.toUpperCase()).map(d => d.season);
             return declared.length ? declared.includes(season) : season === 1;
@@ -2254,7 +2270,7 @@ async function resolveStreams(type, fullId, config) {
 
     // Movie matching — drop torrents that aren't THIS film (sequels, remakes, name-substring hits)
     if (type === 'movie') {
-        const matched = allTorrents.filter(t => matchesMovie(t.title, meta.name, movieYear, meta.bulgarian_name));
+        const matched = allTorrents.filter(t => ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name)));
         if (matched.length > 0) {
             if (matched.length < allTorrents.length) {
                 console.log(`  ${matched.length}/${allTorrents.length} match movie "${meta.name}"${movieYear ? ` (${movieYear})` : ''}`);

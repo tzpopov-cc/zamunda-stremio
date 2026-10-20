@@ -365,3 +365,15 @@ series tt23148340:1:1  # Crystal Lake (B-003)
 series tt11794812:2:5  # Cross S2E5 (B-006)
 series tt7678620:1:5   # Bluey S1E5 — bare pack resolved per episode (guard)
 series tt31510819:2:4  # MobLand S2E4 — season missing, row stays (guard)
+# T-202 (B-018) dotted abbreviations, 20.10.2026
+series tt2805096:1:3   # Chicago P.D. S1E3 — archive has "Chicago.PD.S01…"
+series tt2805096:3:5   # Chicago P.D. S3E5
+series tt2805096:14:2  # Chicago P.D. S14E2 (searched 5× in the log)
+series tt6111130:1:1   # S.W.A.T. S1E1
+series tt6111130:3:5   # S.W.A.T. S3E5
+series tt0362359:2:22  # The O.C. S2E22
+series tt2364582:1:1   # Agents of S.H.I.E.L.D. S1E1
+movie tt0083866        # E.T. the Extra-Terrestrial
+movie tt0364970        # Babylon A.D.
+movie tt0119488        # L.A. Confidential
+movie tt1616195        # J. Edgar — guard (one dotted letter)

@@ -31,4 +31,9 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 
 ## New tasks
 
-(none)
+- [x] **T-202** A name with a dotted abbreviation ("Chicago P.D.", "S.W.A.T.", "The O.C.") is also searched and
+      matched in its joined form ("Chicago PD") (B-018).
+- [ ] **T-203** A release name with underscores is read like one with spaces — season packs found, no wrong
+      season (B-019).
+- [ ] **T-204** Every dead end with a known reason gets a row: non-video rows leave before matching; "none carry
+      the show name", "no season/episode to name" and "all under a longer name" get an honest row (B-020).

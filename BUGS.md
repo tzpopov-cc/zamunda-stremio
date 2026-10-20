@@ -5,12 +5,29 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
+- **B-019 — underscores in a release name hide its season** (owner: T-203). 3,9 % of archive titles use "_"
+  for spaces (300 of 7 732 in the replay cache; 104 with a season marker: "Slow_Horses_S05E05",
+  "The_Wire_-_Season_1_-_1_2002_UHD", "Mayor_of_Kingstown_S04E07"). "_" is a word character, so "Season_2" and
+  "_S02_" are not read: "Blue_Lights_-_Season_2_-_2_2024_UHD" is not offered for Blue Lights S2E3 (the viewer
+  gets nothing), and "Some_Show_S02_Complete_1080p" counts as a match for S1E1 — a wrong stream.
+- **B-020 — a dead end with a known reason still returns an empty list** (owner: T-204). In the bug-hunt pass
+  (361 ids on v2.6.8) 25 lists were empty: (a) a game or a music album passes as the title before the category
+  filter drops it — "Haunted Hotel 2 - Believe the Lies" (game) for Haunted Hotel S2E3 instead of „Няма сезон
+  2" (the archive has S01), "36 Crazyfists - Lanterns" (album) for Lanterns, a Linux game for Digger (2026);
+  (b) "none carry the show name" (Hunter X Hunter — not in the archive under any spelling, Last Seen, Slime S4);
+  (c) show releases but no season/episode to name (Detective Hole ← the film "Detective.Dee…Hole.2023",
+  Formula 1 S77); (d) the T-105 "all under a longer name" path.
 - **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
   answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
 
+- **B-018 — a name with a dotted abbreviation misses the releases written without dots** (found by the T-201 bug hunt, closed by T-202). Found
+  by the bug hunt in the live dashboard log (20.10 18:40): "Chicago P.D." S1E3 → „Няма сезон 1, в архива има S03",
+  while the archive holds 32 rows for "Chicago PD S01" ("Chicago.PD.S01.720p.HDTV…", "Chicago PD s01"). The name
+  becomes the words "chicago p d"; "Chicago.PD" is "chicago pd". In the 5-day log: Chicago P.D. 18 searches, every
+  one with only 1 of 61–93 results passing as the show; also S.W.A.T., The O.C., R.J. Decker, M.I.A.
 - **B-011 — roman numerals reached the show-name head** (found by the T-107 review, closed by T-107).
   Folded to a bare number, "III" ended the head like an episode number: "Lupin.III.Part.6.S01E05" passed for
   Lupin (2021), "Overlord IV - 05" for Overlord S1E5, "Final.Fantasy.VII.Remake" for Final Fantasy. Introduced by
