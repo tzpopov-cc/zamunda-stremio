@@ -20,7 +20,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 - [x] **T-106** Cinemeta: a shorter wait on the main host before the fallback (B-007); a name that came from the
       fallback host is not kept for a day (it can differ: tt0189154 "Toplo" on v3, "The Central Warmth" on
       cinemeta-live — the archive has it only as Toplo).
-- [ ] **T-107** End of stage 1: fresh-context review → fixes → full replay (0 lost) → v2.6.8 (version strings +
+- [x] **T-107** End of stage 1: fresh-context review → fixes → full replay (0 lost) → v2.6.8 (version strings +
       changelog + RUNBOOK) → deploy with backup → live checks → push.
 
 ## Stage 2 — bug hunt
