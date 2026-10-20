@@ -5,13 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-034 — an older season of a long show is called missing when its only pack is a multi-season one** (owner:
-  T-218). Found by the T-201 bug hunt pass 4 (live searches 20.10 21:01 – 21.10 ~02:00 UTC): the season is looked
-  for as "<name>" (the newest 50 rows) and "<name> S04"; a pack named "S01-16" or "Season 01-15" is in neither.
-  Grey's Anatomy S4E1 → „Няма сезон 4" while "Greys.Anatomy.S01-16.WEBRip.x264-ION10" (147,46 GB) answers "Grey's
-  Anatomy Season 4"; NCIS S2E3 → „Няма сезон 2" while "NCIS - Season 01-15" (110,48 GB) answers "NCIS Season 2";
-  Joey S1E23/E24 → „Не е намерен" while "Joey Season 1 [BGAudio.TVRip]-Planet" (3,93 GB, BG audio) answers "Joey
-  Season 1".
 - **B-036 — a season the archive has only without a link is called missing** (owner: T-219). Found by the T-201 bug
   hunt pass 4: The Simpsons S9 — the only season-9 releases are "The Simpsons season 1-18 complete" and "Simpsons
   Seasons 00-19", both without an infohash; the viewer is told „Няма сезон 9" (the season is not in the archive)
@@ -35,6 +28,13 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-034 — an older season of a long show is called missing when its only pack is a multi-season one** (found by the T-201
+  bug hunt pass 4, live searches 20.10 21:01 – 21.10 ~02:00 UTC, closed by T-218): the season is looked
+  for as "<name>" (the newest 50 rows) and "<name> S04"; a pack named "S01-16" or "Season 01-15" is in neither.
+  Grey's Anatomy S4E1 → „Няма сезон 4" while "Greys.Anatomy.S01-16.WEBRip.x264-ION10" (147,46 GB) answers "Grey's
+  Anatomy Season 4"; NCIS S2E3 → „Няма сезон 2" while "NCIS - Season 01-15" (110,48 GB) answers "NCIS Season 2";
+  Joey S1E23/E24 → „Не е намерен" while "Joey Season 1 [BGAudio.TVRip]-Planet" (3,93 GB, BG audio) answers "Joey
+  Season 1".
 - **B-035 — a season list "Season 1,2,3" is read as season 1 only** (found by the T-201 bug hunt pass 4, closed by T-217):
   "NCIS Season 1,2,3 DVDRip-TVRip BGAudio DivX-bbb" is on the first page of "NCIS", but `declaredSeasons` reads
   "Season 1" and stops at the comma, so the BG-audio pack is not offered for seasons 2 and 3. 1 of 13 682 names in

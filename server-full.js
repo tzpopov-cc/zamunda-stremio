@@ -861,7 +861,10 @@ const QUERY_TAIL = /^((19|20)\d{2}|S\d{1,2}(E\d{1,3})?)$/i;   // a year or S01 /
 function shortenQuery(q) {
     const words = sanitizeQuery(q).split(' ').filter(Boolean);
     if (words.length <= LIFE_MAX_TERMS) return null;
-    const tail = QUERY_TAIL.test(words[words.length - 1]) ? [words[words.length - 1]] : [];
+    const n = words.length;
+    // "Season 4" stays whole: cut to "Season" or "4" it finds nothing of that season (B-034, v2.6.9).
+    const tail = QUERY_TAIL.test(words[n - 1]) ? [words[n - 1]]
+        : /^season$/i.test(words[n - 2]) && /^\d{1,2}$/.test(words[n - 1]) ? words.slice(n - 2) : [];
     let head = words.slice(0, words.length - tail.length).filter(w => !QUERY_STOPWORDS.has(w.toLowerCase()));
     // Still too long: drop the shortest words first, keeping the order of the rest.
     while (head.length > LIFE_MAX_TERMS - tail.length) {
@@ -2320,6 +2323,33 @@ async function resolveStreams(type, fullId, config) {
         // passed for Ben Affleck's "Animals" (2026) on the exact-name rule.
         const keeps = t => carries(t) && (type !== 'movie' || torrentYears(spaced(t)).length > 0);
         if (!allTorrents.some(carries)) allTorrents = allTorrents.concat(await deepSearch(meta.name, keeps));
+    }
+    // An older season of a long show is often in neither the newest 50 rows of its name nor "<name> S04": a pack named
+    // "S01-16" or "Season 01-15" answers only "<name> Season 4". Grey's Anatomy S4 and NCIS S2 were told the season is
+    // missing, Joey S1 that the episode is, next to a BG-audio "Joey Season 1" pack (B-034, v2.6.9). So when the show
+    // is here but no playable row of it is this episode, it is searched once more. A row with other words before the
+    // name ("Melissa.and.Joey" for Joey) is dropped further down when plain rows exist, so it does not count here.
+    if (type === 'series' && season && episode) {
+        const spaced = t => (t.title || '').replace(/_+/g, ' ');
+        const names = [...ownNames, ...altNames];
+        const onShow = t => isVideoCategory(t) && names.some(n => matchesSeriesTitle(spaced(t), n, meta.bulgarian_name));
+        const plainEpisode = t => isVideoCategory(t) && matchesEpisode(spaced(t), season, episode) !== null
+            && names.some(n => matchesSeriesTitle(spaced(t), n, meta.bulgarian_name) && !namePrefix(spaced(t), headTokens(n)).length);
+        if (allTorrents.some(onShow) && !allTorrents.some(t => extractInfohash(t.link) && plainEpisode(t))) {
+            const q = `${meta.name} Season ${season}`;
+            const qs = new Set([q, q.replace(/['’`]/g, ' ')].map(x => shortenQuery(x) || x));
+            let added = 0;
+            for (const x of qs) {
+                const more = await searchZamunda(x);
+                // Only this episode's rows under the plain name. The search's other rows — other seasons, other shows
+                // — would change what the checks below conclude: "Joey Season 1" next to "Melissa.and.Joey.S02" made
+                // the latter pass as Joey S2 under a former title (the "Special Ops: Lioness" rule).
+                const mine = (more || []).filter(plainEpisode);
+                allTorrents = allTorrents.concat(mine);
+                added += mine.length;
+            }
+            console.log(`  season search ${[...qs].map(x => `"${x}"`).join(', ')}: ${added} row(s) of S${season}E${episode}`);
+        }
     }
 
     // "_" stands for a space in 3,9 % of archive names ("Slow_Horses_S05E05", "The_Wire_-_Season_1_-_1_2002_UHD"),

@@ -57,7 +57,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 - [x] **T-215** A v2.0.0 install link's `rdmode=all` is read as "debrid + P2P" again (B-032).
 - [x] **T-216** A config with a broken "%" sequence gets a plain answer — no stack trace, no hung request (B-033).
 - [x] **T-217** A season list ("Season 1,2,3", "Seasons 1 & 2") is a pack of every season in it (B-035).
-- [ ] **T-218** A show in the archive with nothing playable for the asked episode is searched once more as "<name>
+- [x] **T-218** A show in the archive with nothing playable for the asked episode is searched once more as "<name>
       Season N" before the season or episode is called missing (B-034).
 - [ ] **T-219** A season or episode the archive has only without an infohash gets „Без връзка в архива", not „Няма
       сезон N" (B-036).
