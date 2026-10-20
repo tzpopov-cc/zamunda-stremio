@@ -5,15 +5,16 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-007 — a slow Cinemeta costs the viewer 5 s** (owner: T-106). 220 timeouts in 5 days (1,7 % of
-  searches), clustered 17–20 UTC (the Bulgarian evening); the fallback host answers, but only after the 5 s
-  timeout of the first.
 - **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
   answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
 
+- **B-007 — a slow Cinemeta costs the viewer 5 s** (closed by T-106). 220 timeouts in 5 days (1,7 % of
+  searches), clustered 17–20 UTC (the Bulgarian evening); the fallback host answers, but only after the 5 s
+  timeout of the first. Measured 20.10: the main host answers in 12 ms (median), the fallback names 7 % of titles differently
+  and its name was kept for a day.
 - **B-006 — a missing season loses its explanation when a stray release names another season** (closed by
   T-105). "Sheriff Country" S2E2: the results hold "Fire Country S02E06 Alert the Sheriff…", which passes the
   show-name check, adds season 2 and episode 2 to the "available" sets, and the viewer gets an empty list

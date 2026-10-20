@@ -347,8 +347,14 @@ function buildManifest(config) {
 // series record carries every episode and would make a day of caching expensive. A timeout or
 // 5xx on the main host is retried once on cinemeta-live, which the main host itself redirects
 // unknown ids to. A 404 is final: it already is cinemeta-live's answer.
+// The main host answers in milliseconds (measured 20.10.2026: median 12 ms, slowest 2,1 s from the server),
+// so its 5 s timeout was a hang the viewer sat through — 2,5 s now (B-007, v2.6.8). The fallback names 7 % of
+// titles differently ("Toplo" is "The Central Warmth" there, and the archive has it only as Toplo), so its
+// answer is kept 30 min, not a day: the next request asks the main host again.
 const CINEMETA_FALLBACK = 'https://cinemeta-live.strem.io/meta';
 const META_TTL = 24 * 60 * 60 * 1000;
+const META_FALLBACK_TTL = 30 * 60 * 1000;
+const CINEMETA_TIMEOUT = { [CINEMETA_API]: 2500, [CINEMETA_FALLBACK]: 5000 };
 
 async function getMetadata(type, imdbId) {
     const key = `meta:${type}:${imdbId}`;
@@ -356,13 +362,13 @@ async function getMetadata(type, imdbId) {
     if (cached) return cached;
     for (const base of [CINEMETA_API, CINEMETA_FALLBACK]) {
         try {
-            const res = await axios.get(`${base}/${type}/${imdbId}.json`, { timeout: 5000 });
+            const res = await axios.get(`${base}/${type}/${imdbId}.json`, { timeout: CINEMETA_TIMEOUT[base] });
             const meta = res.data && res.data.meta;
             // Only cache usable metadata — caching a nameless meta poisons the key for the full TTL
             if (!meta || !meta.name) return meta || null;
             const slim = { name: meta.name, bulgarian_name: meta.bulgarian_name, year: meta.year, releaseInfo: meta.releaseInfo,
                 genres: meta.genres || meta.genre || [], country: meta.country || '' };
-            setCached(key, slim, META_TTL);
+            setCached(key, slim, base === CINEMETA_API ? META_TTL : META_FALLBACK_TTL);
             return slim;
         } catch (e) {
             console.error(`Cinemeta error via ${new URL(base).host}:`, e.message);
