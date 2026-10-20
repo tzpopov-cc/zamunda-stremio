@@ -2009,7 +2009,15 @@ function namesAnotherShow(title, toks) {
         if (missing.some(t => bracketed.has(t))) return false;
         return head.some(w => !toks.includes(w) && !neutralWord(w));
     }
-    const end = Math.max(...toks.map(t => head.indexOf(t)));
+    // Where the name ends: after its words standing together, so a repeated word ends where the name does — "Hunter x
+    // Hunter - 01" ends at the second "hunter"; read from the first, " x hunter" looked like another show's words
+    // (B-026, v2.6.9). Scattered words keep the furthest first occurrence: "Eden of the East … King of Eden" is not
+    // East of Eden.
+    const bare = head.map((w, i) => [w, i]).filter(([w]) => !TITLE_STOPWORDS.has(w));
+    let end = -1;
+    for (let p = 0; end < 0 && p + toks.length <= bare.length; p++)
+        if (toks.every((t, k) => bare[p + k][0] === t)) end = bare[p + toks.length - 1][1];
+    if (end < 0) end = Math.max(...toks.map(t => head.indexOf(t)));
     return head.slice(end + 1).some(w => !neutralWord(w));
 }
 

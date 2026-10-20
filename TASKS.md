@@ -43,3 +43,6 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 - [x] **T-207** A P2P pack whose known file list lacks the episode is not offered for it (B-023).
 - [x] **T-208** A film of the same name is not offered for a series: a bare-named release or a "complete" pack that
       looks like a film (filed as a film or Blu-ray disc, or years outside the show's run) is left out (B-024).
+- [x] **T-209** A show name with a repeated word ("Hunter x Hunter") passes the show check for its own releases (B-026).
+- [ ] **T-210** A full first page of a name search with nothing of the title in it is read further (next pages,
+      capped and cached) before the title is called missing (B-027).

@@ -5,6 +5,12 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
+- **B-027 — a title beyond the archive's first 50 rows is called missing** (owner: T-210). Found by the T-201
+  bug hunt pass 2: the archive answers at most 50 rows, newest first, and matches every word as a substring, so
+  "Hunter X Hunter" is a search for "hunter" + "x" (in every "x264") — 796 rows, the 2011 series ("[SFS] Hunter x
+  Hunter - 01 - 148 [HD]", BG subs, its films and OVAs) at rows 488–711. The viewer is told „Няма го в архива".
+  Of the 92 titles answered as missing in the replay, 19 have a full first page; this one is the only real miss.
+  `offset` pages the answer (the Oracle proxy passes it on).
 - **B-025 — a later series of the same name is offered for the earlier one** (no owner yet — needs a check
   first). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
   the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
@@ -16,6 +22,10 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-026 — a show name with a repeated word rejects its own releases** (found by the T-201 bug hunt pass 2, closed by T-209). Found with B-027:
+  "[SFS] Hunter x Hunter - 01 - 148" fails the show check for Hunter X Hunter — the name's end is looked up from the
+  first "hunter", so " x hunter" reads as another show's words after the name.
+
 - **B-024 — a film of the same name is offered for a series** (found by the T-201 bug hunt pass 2, closed by T-208). Found by the T-201 bug hunt pass 2:
   Carrie (2026) S1E1 → 21 rows of the 1976 and 2013 films ("Carrie.2013.1080p.BluRay", "Carrie.BDRip.XviD-WAR");
   Below (2026) S1E1 → "Below.2002"; Tom & Jerry (1940–1967) S1E1 → "Tom.and.Jerry.2021.MULTi.COMPLETE.BLURAY".
