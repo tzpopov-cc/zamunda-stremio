@@ -22,10 +22,13 @@ http.createServer(async (req, res) => {
             return res.end('{"total":448023,"zamunda":396421,"arena":42989,"zelka":8613}');
         }
         const q = u.searchParams.get('q') || '', limit = u.searchParams.get('limit') || '50';
-        const file = path.join(CACHE, 'life', crypto.createHash('sha1').update(`${q}|${limit}`).digest('hex') + '.json');
+        // A later page (B-027) has its own file; the first page keeps the key it always had.
+        const offset = u.searchParams.get('offset') || '';
+        const file = path.join(CACHE, 'life', crypto.createHash('sha1').update(`${q}|${limit}${offset && offset !== '0' ? `|${offset}` : ''}`).digest('hex') + '.json');
         const body = await once(file, async () => {
             if (fs.existsSync(file)) return fs.readFileSync(file, 'utf8');
-            const r = await axios.get('https://zamunda.life/api/torrents', { params: { q, limit }, headers: { 'User-Agent': UA }, timeout: 20000, responseType: 'text', transformResponse: x => x });
+            const params = offset && offset !== '0' ? { q, limit, offset } : { q, limit };
+            const r = await axios.get('https://zamunda.life/api/torrents', { params, headers: { 'User-Agent': UA }, timeout: 20000, responseType: 'text', transformResponse: x => x });
             fs.writeFileSync(file, r.data);
             return r.data;
         });

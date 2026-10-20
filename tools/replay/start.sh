@@ -17,7 +17,7 @@ for side in old new; do
               -e "s#'https://api.real-debrid.com/rest/1.0'#'http://127.0.0.1:9913/rest/1.0'#" "run/$side/server.js"
 done
 pkill -f "tools/replay/run/(old|new)/server.js" 2>/dev/null || true
-pgrep -f "tools/replay/stubs.js" >/dev/null || (node stubs.js > run/stubs.log 2>&1 &)
+pgrep -f "tools/replay/stubs.js" >/dev/null || (node "$PWD/stubs.js" > run/stubs.log 2>&1 &)
 pgrep -f "tools/replay/rd-stub.js" >/dev/null || (node "$PWD/rd-stub.js" > run/rd-stub.log 2>&1 &)
 for pair in old:7101 new:7102; do
     side=${pair%%:*}; port=${pair##*:}

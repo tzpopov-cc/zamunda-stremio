@@ -910,6 +910,63 @@ async function searchZamunda(rawQuery) {
     return null;   // null = no provider reachable AND nothing indexed
 }
 
+// The archive answers at most 50 rows, newest first, and reads every word as a substring: "Hunter X Hunter" is a
+// search for "hunter" + "x" (in every "x264") — 796 rows, the 2011 series at rows 488–711, and the viewer was told
+// „Няма го в архива" (B-027, v2.6.9). When the name's own search fills its page and no film or series row carries the
+// name, the next pages are read, DEEP_PARALLEL at a time, until the name's rows end (a page without them after pages
+// with them), the answer ends, or DEEP_MAX_ROWS. Only the rows that carry the name are kept. The result is remembered
+// for DEEP_TTL_MS — an empty one too, so a title that is not there does not page again on every request — and the
+// rows found go to the index as well, for the day the archive is down.
+const DEEP_MAX_ROWS = 1000;
+const DEEP_PARALLEL = 4;
+const DEEP_TTL_MS = 6 * 60 * 60 * 1000;
+
+async function fetchPage(query, offset) {
+    for (const base of PROVIDERS) {
+        try {
+            const res = await axios.get(base, {
+                params: { q: query, limit: 50, offset },
+                timeout: 10000,
+                headers: { 'User-Agent': 'Mozilla/5.0 ZamundaStremio/1.0', 'X-Api-Key': PROXY_API_KEY }
+            });
+            return Array.isArray(res.data) ? res.data : [];
+        } catch (e) {
+            console.error(`Zamunda page at ${offset} error via ${base}:`, e.message);
+        }
+    }
+    return null;
+}
+
+async function deepSearch(rawQuery, carries) {
+    const query = sanitizeQuery(rawQuery);
+    const key = `deep:${query.toLowerCase()}`;
+    const cached = getCached(key);
+    if (cached) return cached;
+    const found = [];
+    let pages = 0, seen = false, done = false, failed = false;
+    for (let off = 50; !done && off < DEEP_MAX_ROWS; off += 50 * DEEP_PARALLEL) {
+        const offsets = [];
+        for (let k = 0; k < DEEP_PARALLEL && off + 50 * k < DEEP_MAX_ROWS; k++) offsets.push(off + 50 * k);
+        const batch = await Promise.all(offsets.map(o => fetchPage(query, o)));
+        for (const rows of batch) {
+            if (rows === null) { failed = done = true; break; }
+            pages++;
+            const own = rows.filter(carries);
+            if (own.length) { found.push(...own); seen = true; }
+            else if (seen) { done = true; break; }
+            if (rows.length < 50) { done = true; break; }
+        }
+    }
+    console.log(`  deep search "${query}": ${pages} more page(s), ${found.length} row(s) of the title${failed ? ' (upstream failed)' : ''}`);
+    if (failed && !found.length) {
+        const stored = idxGet(`${query} #deep`);
+        return stored ? stored.rows : [];
+    }
+    if (!failed) setCached(key, found, DEEP_TTL_MS);
+    if (found.length) { idxPut(`${query} #deep`, found); catPut(found); }
+    return found;
+}
+
 // Parse a release name once and memoise it on the torrent. parsium-media is the same
 // engine IntellDebridSearch uses; it understands resolution, source, codec, bit depth,
 // HDR flavour, audio codec, channel layout and language tags.
@@ -2205,10 +2262,23 @@ async function resolveStreams(type, fullId, config) {
 
     let allTorrents = [];
     let upstreamFailed = false;
+    let namePageFull = false;
     for (const q of expanded) {
         const results = await searchZamunda(q);
         if (results === null) { upstreamFailed = true; continue; }
+        if (q === meta.name && results.length >= 50) namePageFull = true;
         allTorrents = allTorrents.concat(results);
+    }
+    // A full first page with nothing of this title in it: read on (B-027).
+    if (namePageFull) {
+        const spaced = t => (t.title || '').replace(/_+/g, ' ');
+        const carries = t => isVideoCategory(t) && (type === 'movie'
+            ? ownNames.some(n => matchesMovie(spaced(t), n, movieYear, meta.bulgarian_name))
+            : [...ownNames, ...altNames].some(n => matchesSeriesTitle(spaced(t), n, meta.bulgarian_name)));
+        // Past the first page the rows are older: a film's must state its year. "Animals" (Други, 70 MB, no year)
+        // passed for Ben Affleck's "Animals" (2026) on the exact-name rule.
+        const keeps = t => carries(t) && (type !== 'movie' || torrentYears(spaced(t)).length > 0);
+        if (!allTorrents.some(carries)) allTorrents = allTorrents.concat(await deepSearch(meta.name, keeps));
     }
 
     // "_" stands for a space in 3,9 % of archive names ("Slow_Horses_S05E05", "The_Wire_-_Season_1_-_1_2002_UHD"),

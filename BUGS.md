@@ -9,12 +9,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   "[RyuKo-JB] Eden of the East 01-11 + Movies" (an anime) is offered for East of Eden (2026) S1E1. When the name's
   words do not stand together, the show check falls back to the old rule (the furthest first word) and accepts
   "eden … east" for "east … eden".
-- **B-027 — a title beyond the archive's first 50 rows is called missing** (owner: T-210). Found by the T-201
-  bug hunt pass 2: the archive answers at most 50 rows, newest first, and matches every word as a substring, so
-  "Hunter X Hunter" is a search for "hunter" + "x" (in every "x264") — 796 rows, the 2011 series ("[SFS] Hunter x
-  Hunter - 01 - 148 [HD]", BG subs, its films and OVAs) at rows 488–711. The viewer is told „Няма го в архива".
-  Of the 92 titles answered as missing in the replay, 19 have a full first page; this one is the only real miss.
-  `offset` pages the answer (the Oracle proxy passes it on).
 - **B-025 — a later series of the same name is offered for the earlier one** (no owner yet — needs a check
   first). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
   the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
@@ -26,6 +20,17 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-028 — an episode range that names no season is offered for every season** (found by the T-210 check, closed by
+  T-211). "[SFS] Hunter x Hunter - 01 - 21 (Hunter Exam Arc)" (season-1 episodes) was offered for S2E3 and S3E5,
+  and "Alice in Borderland S01E01-02" for S2E1: the season-less range patterns read "01 - 21" and the "01-02" inside
+  "S01E01-02" for any season. Cinemeta restarts each season at 1, so a range without a season is season 1's.
+
+- **B-027 — a title beyond the archive's first 50 rows is called missing** (found by the T-201 bug hunt pass 2, closed by T-210): the archive answers at most 50 rows, newest first, and matches every word as a substring, so
+  "Hunter X Hunter" is a search for "hunter" + "x" (in every "x264") — 796 rows, the 2011 series ("[SFS] Hunter x
+  Hunter - 01 - 148 [HD]", BG subs, its films and OVAs) at rows 488–711. The viewer is told „Няма го в архива".
+  Of the 92 titles answered as missing in the replay, 19 have a full first page; this one is the only real miss.
+  `offset` pages the answer (the Oracle proxy passes it on).
+
 - **B-026 — a show name with a repeated word rejects its own releases** (found by the T-201 bug hunt pass 2, closed by T-209). Found with B-027:
   "[SFS] Hunter x Hunter - 01 - 148" fails the show check for Hunter X Hunter — the name's end is looked up from the
   first "hunter", so " x hunter" reads as another show's words after the name.
