@@ -28,7 +28,7 @@ const ZAMUNDA_API = 'https://api-proxy.tzkppv.com';
 const PROVIDERS = (process.env.ZAMUNDA_PROVIDERS || ZAMUNDA_API)
     .split(',').map(x => x.trim()).filter(Boolean);
 const CINEMETA_API = 'https://v3-cinemeta.strem.io/meta';
-const RD_API = process.env.RD_API || 'https://api.real-debrid.com/rest/1.0';   // env: the replay's RD stub
+const RD_API = 'https://api.real-debrid.com/rest/1.0';
 const TB_API = 'https://api.torbox.app/v1';
 
 // Public origin of this addon — used to build absolute stream URLs.
@@ -316,7 +316,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.6.7',
+        version: '2.6.8',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -367,7 +367,7 @@ async function getMetadata(type, imdbId) {
             // Only cache usable metadata — caching a nameless meta poisons the key for the full TTL
             if (!meta || !meta.name) return meta || null;
             const slim = { name: meta.name, bulgarian_name: meta.bulgarian_name, year: meta.year, releaseInfo: meta.releaseInfo,
-                genres: meta.genres || meta.genre || [], country: meta.country || '' };
+                genres: meta.genres || meta.genre || [], country: meta.country || '', fallback: base !== CINEMETA_API };
             setCached(key, slim, base === CINEMETA_API ? META_TTL : META_FALLBACK_TTL);
             return slim;
         } catch (e) {
@@ -1817,11 +1817,16 @@ function plainNumberQuery(q) {
         .replace(/\bPart\s+(One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten)\b/gi, (m, w) => `Part ${SPELLED_NUMBER[w.toLowerCase()]}`)
         .replace(/[:\s-]*\bPart\s+(\d{1,2})\b/gi, ' $1')
         .replace(/\s+/g, ' ').trim();
-    return out !== q ? out : null;
+    return out !== q && /\p{L}{2}/u.test(out) ? out : null;
 }
 
+// Show-name heads compare words as written: "Lupin.III.Part.6" must stay a different show from Lupin, and a
+// folded "3" would end the head like an episode number does (review of 20.10.2026).
 function normalizeTitle(s) {
-    return foldSequel((s || '')
+    return foldSequel(normalizeWords(s));
+}
+function normalizeWords(s) {
+    return ((s || '')
         .normalize('NFD').replace(/[̀-ͯ]/g, '')   // é→e (also й→и — harmless, both sides fold)
         .toLowerCase()
         .replace(/(\p{L})_(s|t|d|m|ll|re|ve)(?=[_.\s]|$)/gu, "$1'$2")
@@ -1872,11 +1877,15 @@ const TITLE_STOPWORDS = new Set(['the', 'a', 'an']);
 function nameTokens(name) {
     return normalizeTitle(name).split(' ').filter(w => w && !TITLE_STOPWORDS.has(w));
 }
+// The same, as written — for comparing with a release's show-name head (see normalizeTitle).
+function headTokens(name) {
+    return normalizeWords(name).split(' ').filter(w => w && !TITLE_STOPWORDS.has(w));
+}
 
 function matchesSeriesTitle(title, name, bgName) {
     const words = new Set(normalizeTitle(title).split(' ').filter(Boolean));
-    const onShow = toks => toks.length > 0 && toks.every(t => words.has(t)) && !namesAnotherShow(title, toks);
-    return onShow(nameTokens(name)) || (!!bgName && onShow(nameTokens(bgName)));
+    const onShow = n => { const toks = nameTokens(n); return toks.length > 0 && toks.every(t => words.has(t)) && !namesAnotherShow(title, headTokens(n)); };
+    return onShow(name) || (!!bgName && onShow(bgName));
 }
 
 // Words a release may put between the show name and the season/episode marker without naming a
@@ -1900,7 +1909,7 @@ function endsShowName(tok) {
 // bracketed tags dropped ("[EasternSpirit]", "[c]", "(US)").
 function showNameHead(title) {
     const head = [];
-    for (const tok of normalizeTitle(title.replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')).split(' ')) {
+    for (const tok of normalizeWords(title.replace(/\[[^\]]*\]|\([^)]*\)/g, ' ')).split(' ')) {
         if (!tok) continue;
         if (endsShowName(tok)) break;
         head.push(tok);
@@ -1935,7 +1944,7 @@ function namesAnotherShow(title, toks) {
         // brackets ("Sousou no Frieren (Frieren Beyond Journey's End) - 05"), or the name part holds nothing
         // but name words ("Spartacus.S01E01.Blood.and.Sand").
         if (missing.some(t => /^\d+$/.test(t))) return false;
-        const bracketed = new Set(normalizeTitle((title.match(/\[[^\]]*\]|\([^)]*\)/g) || []).join(' ')).split(' '));
+        const bracketed = new Set(normalizeWords((title.match(/\[[^\]]*\]|\([^)]*\)/g) || []).join(' ')).split(' '));
         if (missing.some(t => bracketed.has(t))) return false;
         return head.some(w => !toks.includes(w) && !neutralWord(w));
     }
@@ -1979,9 +1988,9 @@ function isBareShowPack(title, name, bgName) {
     if (declaredSeasons(clean.toUpperCase()).length) return false;
     const head = showNameHead(clean);
     // The word the name stops at: a number there that is not a year is an episode or a part.
-    const stop = normalizeTitle(clean).split(' ').filter(Boolean)[head.length] || '';
+    const stop = normalizeWords(clean).split(' ').filter(Boolean)[head.length] || '';
     if (/^\d{1,4}$/.test(stop) && !/^(19|20)\d{2}$/.test(stop)) return false;
-    return isJustTheName(head, nameTokens(name)) || (!!bgName && isJustTheName(head, nameTokens(bgName)));
+    return isJustTheName(head, headTokens(name)) || (!!bgName && isJustTheName(head, headTokens(bgName)));
 }
 
 function matchesMovie(title, name, year, bgName) {
@@ -2122,7 +2131,7 @@ async function resolveStreams(type, fullId, config) {
             logEvent('GAP', `${label} — ${hashless.length} results, all without a link [${hashless.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
             return [noLinkRow(config, meta.name, titleYear)];
         }
-        logEvent('GAP', `${label} — 0 results from zamunda`);
+        logEvent('GAP', `${label} — 0 results from zamunda${hashless.length ? ` (${hashless.length} without a link, none this title)` : ''}`);
         return [notInArchiveRow(config, meta.name, titleYear)];
     }
 
@@ -2163,16 +2172,18 @@ async function resolveStreams(type, fullId, config) {
             // "Tales.of.the.Walking.Dead") but sometimes the same one under a longer title
             // ("Special.Ops.Lioness" for Lioness). So they stay only when nothing for this
             // episode carries the name plainly.
-            const prefixOf = t => namePrefix(t.title, nameTokens(nameOf(t) || meta.name)).join(' ');
+            const prefixOf = t => namePrefix(t.title, headTokens(nameOf(t) || meta.name)).join(' ');
             const plain = matched.filter(t => !prefixOf(t));
             if (plain.length && plain.length < matched.length) {
                 console.log(`  ${matched.length - plain.length} dropped: other words before the show name`);
             }
-            // Nothing plain: the longer name is this show under a former title only when every release carries the
-            // same one, more than once ("Special.Ops.Lioness" ×11 for Lioness). Otherwise they are other shows:
-            // "Chief of War", "Bleach Thousand-Year Blood War", "Queen Love and War" for War; "Brews.Brothers" for
-            // Brothers (replay 20.10.2026, v2.6.8).
-            if (!plain.length && (new Set(matched.map(prefixOf)).size > 1 || matched.length < 2)) {
+            // Nothing plain: the longer name is this show under a former title only when the show is in the results
+            // under its own name too (other episodes or seasons) and every match carries the same longer name, more
+            // than once ("Special.Ops.Lioness" ×11 for Lioness, next to "Lioness.S02…"). Otherwise they are other
+            // shows: "Chief of War", "Bleach Thousand-Year Blood War", "Queen Love and War" for War; "Brews.Brothers"
+            // for Brothers (replay and review 20.10.2026, v2.6.8).
+            const ownName = allTorrents.some(t => !prefixOf(t));
+            if (!plain.length && (!ownName || new Set(matched.map(prefixOf)).size > 1 || matched.length < 2)) {
                 logEvent('MISS', `${label} — ${matched.length} episode matches, all under a longer name [${matched.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
                 return [];
             }
@@ -2388,7 +2399,7 @@ async function resolveStreams(type, fullId, config) {
         // If TB token is expired/invalid, show warning + fall back to P2P
         if (cached._authError) {
             const tbAuthHint = [{
-                name: `⚠️ TorBox грешка\nZamunda BG`,
+                name: config.lang === 'bg' ? `⚠️ TorBox грешка\nZamunda BG` : `⚠️ TorBox error\nZamunda BG`,
                 title: config.lang === 'bg'
                     ? `TorBox токенът е изтекъл или невалиден.\nПреконфигурирай добавката с нов токен.`
                     : `TorBox token expired or invalid.\nReconfigure the addon with a new token.`,
@@ -2465,18 +2476,25 @@ async function resolveStreams(type, fullId, config) {
             return out;
         }
 
+        // A refusal after some links resolved: the rest were never asked. Say why under the RD rows and do not
+        // cache — an hour of a short list for a minute of "busy" (review of 20.10.2026).
+        const partial = list => {
+            if (accountProblem) list._noCache = true;
+            return list;
+        };
         if (debridMode === 'all') {
             const resolvedHashes = new Set(results.filter(r => r.url).map(r => r.torrent._infohash));
             const p2pStreams = dropDeadP2P(filtered.filter(t => !resolvedHashes.has(t._infohash)))
                 .map(t => buildStream(t, null, 'p2p'));
             console.log(`  → ${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s${refusedNote}`);
             logEvent('RD', `${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"${refusedNote}`);
-            return [...hints, ...rdStreams, ...p2pStreams];
+            const notice = accountProblem ? [rdNotice(accountProblem.kind, config, p2pStreams.length)] : [];
+            return partial([...hints, ...rdStreams, ...notice, ...p2pStreams]);
         }
 
         console.log(`  → ${rdStreams.length} playable in ${elapsed}s${refusedNote}`);
         logEvent('RD', `${rdStreams.length} playable in ${elapsed}s — "${meta.name}"${refusedNote}`);
-        return [...hints, ...rdStreams];
+        return partial([...hints, ...rdStreams, ...(accountProblem ? [rdNotice(accountProblem.kind, config, 0)] : [])]);
     }
 
     // ---- P2P MODE ----
@@ -2508,9 +2526,6 @@ function peerSources(torrent) {
     return [...trackers.map(t => `tracker:${t}`), `dht:${torrent._infohash}`];
 }
 
-// A P2P row whose swarm has no seeders will not start. Once at least one row is proven alive,
-// the dead ones only push it down the list, so drop them. If none is proven alive (or the
-// scrape failed and nothing has a count), keep everything — an unknown is not a dead torrent.
 // A title the archive cannot play gets a row saying so, never an empty list (B-003, v2.6.8): until then a
 // quarter of all searches (15–20.10.2026) came back with nothing at all, which reads as a broken addon.
 // The archive stopped receiving torrents in 2026 — its size (448 023) has not moved since 07.10.2026 and
@@ -2542,6 +2557,9 @@ function noLinkRow(config, name, year) {
     };
 }
 
+// A P2P row whose swarm has no seeders will not start. Once at least one row is proven alive,
+// the dead ones only push it down the list, so drop them. If none is proven alive (or the
+// scrape failed and nothing has a count), keep everything — an unknown is not a dead torrent.
 function dropDeadP2P(torrents) {
     const isDead = t => typeof t._seeders === 'number' && t._seeders === 0;
     const anyAlive = torrents.some(t => typeof t._seeders === 'number' && t._seeders > 0);
@@ -2781,7 +2799,10 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         }
 
         const streams = await resolveStreams(type, id, config);
-        if (streams.length > 0 && !streams._noCache && !config._filesPending) setCached(cacheKey, streams);
+        // A list built on the fallback host's name is not kept: that name can be wrong ("The Central Warmth" for
+        // Toplo), and the next request should ask the main host again (review of 20.10.2026).
+        const meta = getCached(`meta:${type}:${id.split(':')[0]}`);
+        if (streams.length > 0 && !streams._noCache && !config._filesPending && !(meta && meta.fallback)) setCached(cacheKey, streams);
         res.json({ streams });
     } catch (e) {
         console.error('Stream handler error:', e);
@@ -3053,7 +3074,7 @@ ${history.map(h => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.6.7</span>
+<span style="font-size:12px;color:var(--dim)">v2.6.8</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -3095,7 +3116,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.7', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.8', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Catch unhandled errors — log and keep running
 process.on('unhandledRejection', (err) => {
@@ -3111,6 +3132,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.6.7 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.6.8 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });

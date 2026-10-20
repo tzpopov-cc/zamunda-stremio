@@ -98,7 +98,7 @@ position in the WHOLE torrent (subtitles and .nfo included), which is what Strem
 server expects as `fileIdx`. It is a cache, not data to protect: delete it and it rebuilds on demand.
 
 Rollback: the server keeps `server.js.bak-<version>-predeploy` + `config.html.bak-<version>-predeploy`
-for every deploy (2.6.2 – 2.6.6 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
+for every deploy (2.6.2 – 2.6.7 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
 Since 2.6.7 a deploy also tags the old image (`docker tag zamunda-stremio-zamunda-stremio:latest …:<old version>`)
 and copies `data/` to `data.bak-<old version>-predeploy` while the container is STOPPED (build first, then
 `stop` → `cp -a` → `up -d`: about 3 s down, and the copy is consistent).
@@ -157,8 +157,23 @@ from a real wrong stream:
   "Dexter.New.Blood". Neutral: tags (`SHOW_NAME_TAGS`), Cyrillic words, single letters ("House.M.D."),
   bracketed text. A bundle listing the show on its own is kept ("Naruto + … Collection",
   "Bron-Broen AKA The Bridge").
+- **A name word only outside the name part (v2.6.8)**: "Fire Country S02E06 Alert the Sheriff" has
+  "sheriff" only in the episode title and a word of its own ("fire") in the name part — another show,
+  not Sheriff Country. Same for a release group: "Peacemaker…H.265-WAR" is not "War". Kept: a missing
+  word that is a number ("1923", "Mob Psycho 100"), one in brackets ("Sousou no Frieren (Frieren Beyond
+  Journey's End) - 05"), or a name part of name words only ("Spartacus.S01E01.Blood.and.Sand"). Price:
+  "Original.Title.S01E05.English.Title" is an honest miss (anime season 1 is rescued by the romaji names).
 - **Words before the name** ("Fuller.House", "Fear.the.Walking.Dead"): kept only when nothing for
-  that episode carries the plain name — "Special.Ops.Lioness" is the only form Lioness has.
+  that episode carries the plain name AND the show is in the results under its own name too AND every
+  match carries the same longer name, at least twice — "Special.Ops.Lioness" ×11 next to "Lioness.S02…".
+  Since v2.6.8; before, "Chief of War" / "Bleach Thousand-Year Blood War" were served for War and
+  "Brews.Brothers" (2020) for Brothers (2026).
+- **Sequel numbers (v2.6.8)** (`foldSequel` in `normalizeTitle`): roman II–XX and "Part N" / "Part Two"
+  fold to the plain number on both sides — "Extraction II" = "Extraction.2.2023", "Toy Story 2" =
+  "Toy.Story.II"; I, V and X stay words ("V for Vendetta", "X", "Malcolm X"). A name with a roman
+  number or "Part N" is also searched with the plain number ("The Karate Kid 2"). Show-name heads
+  compare words AS WRITTEN (`normalizeWords`, `headTokens`): folded, "Lupin.III.Part.6" would stop at
+  "3" like at an episode number and pass for Lupin (found by the 20.10.2026 review).
 - **Declared seasons** (`declaredSeasons`): "S3", "Season.01", "3rd Season", season ranges and anime
   "Title 3 - 25". A release naming only other seasons is not a match; for the right season the episode
   part after it decides (`episodeSpan`). Before this, "Kuroko's Basketball 3 - 25" was read as episodes
@@ -197,6 +212,27 @@ file — a real TorBox account showed "Vikings s01-03" playing `s02 ep07` for S1
   identical to v2.6.6, 0 lost, ~2 800 new episodes found, 0 picks of a file naming another episode;
   31 films in 9 real collections all right.
 
+### What the viewer is told (v2.6.8)
+
+An empty list reads as a broken addon, so every dead end now carries a row (all point at
+`NOTICE_INFO_URL`, Bulgarian and English by `lang`):
+- **Not in the archive** (`notInArchiveRow`, GAP): the search found nothing that is this title. For a
+  title from 2026 on it adds that the archive receives no new torrents (448 023 since 07.10.2026). 25 %
+  of all searches over 15–20.10 used to end with nothing at all.
+- **In the archive without a link** (`noLinkRow`, GAP): 7,9 % of archive rows carry `btih:&dn=` — no
+  hash, unplayable, and no detail endpoint to recover it.
+- **Real-Debrid refused** (`rdNotice`): `checkAndResolve` returns RD's `{status, code, error}`;
+  `rdAccountProblem` reads the error code first (35 "infringing file" on a 503 is one torrent, not RD
+  down), the HTTP status only without one. An account-level refusal (token 8 / premium 9,14,15,20 /
+  limit 21,23,36 / busy 5,34 / ip 22 / down 25,37) stops the remaining torrents (≤ 2 in flight), shows
+  the notice and the P2P rows in both modes, and the list is not cached — also when some RD links had
+  resolved before it (notice under the RD rows). Before: up to 23 calls, then an empty list. The log
+  line names the refusal (`RD refused: 403 permission_denied ×N`), never the token.
+- **Cinemeta** (`getMetadata`): main host 2,5 s, then cinemeta-live 5 s. The main host answers in
+  milliseconds (20.10.2026: median 12 ms; slowest from the server 2,1 s), so 5 s was a hang. The fallback
+  names 7 % of titles differently ("Toplo" → "The Central Warmth", which the archive does not have), so
+  its answer is kept 30 min, not 24 h, and a list built on it is not cached.
+
 ### TorBox plays on demand (v2.6.7)
 
 The list makes ONE cache check (`checkcached`, with file lists) and keeps a cached release only if it
@@ -218,7 +254,11 @@ node diff.js out/final                           # lost / gained rows, fileIdx c
 ```
 
 `stubs.js` answers the archive and itorrents from `cache/` so both versions see identical data; the
-tracker is pointed at a dead port so seeder counts cannot differ. Unit tests alone are not enough:
+tracker is pointed at a dead port so seeder counts cannot differ. `rd-stub.js` (:9913) plays Real-Debrid
+by token — `stub-ok` (cached = hash starting 0–7), `stub-bad` / `stub-free` / `stub-busy` /
+`stub-infr` (refusals), `stub-late` (2 calls pass, then 429) — so RD runs without an account:
+`node drive.js ids.txt out/rd "debrid=realdebrid|rdtoken=stub-ok|debridmode=all"`. `diff.js` compares
+debrid rows by release name and lists info rows separately (a notice appearing is not a lost stream). Unit tests alone are not enough:
 every v2.6.6 round found real losses they missed.
 
 ### Egress proxy (Oracle)
