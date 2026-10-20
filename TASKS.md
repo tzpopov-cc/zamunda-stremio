@@ -7,7 +7,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 - [x] **T-101** Replay harness: info rows visible in `diff.js` (B-009); add the targeted ids from the 20.10
       review (Extraction II, The Karate Kid Part II/III, Sheriff Country S2, The Unbearable Lightness of
       Being, the top zero-result titles) to `ids.txt`.
-- [ ] **T-102** Real-Debrid: record why RD refused (error code, never the token), stop checking the rest of a
+- [x] **T-102** Real-Debrid: record why RD refused (error code, never the token), stop checking the rest of a
       list after an account-level refusal, and show a notice row + P2P fallback like TorBox (B-001, B-002).
       Tested against a local RD stub.
 - [ ] **T-103** A title with nothing usable in the archive gets an info row instead of an empty list: "not in

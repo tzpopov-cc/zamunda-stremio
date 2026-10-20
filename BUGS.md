@@ -5,15 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-001 — Real-Debrid refusals are swallowed** (owner: T-102). `checkAndResolve` catches every error and
-  returns `null`, so a refused request looks like "not cached" and nothing records why. About 36 % of RD
-  lists with ≥ 4 torrents fail on the FIRST call for every torrent (< 45 ms each; the RD API answers in
-  ~75 ms cold, ~25 ms on a kept connection — a real check is add + info + delete). Example 17.10 22:xx:
-  "Interstellar" — 23 torrents, 0 RD in 0,4 s; a TorBox viewer got 8 cached from the same 23 on 18.10.
-  RD > 0 in 20 % of RD lists vs TorBox > 0 in 48 % of TorBox lists.
-- **B-002 — an RD account problem is never shown to the viewer** (owner: T-102). TorBox has a notice row
-  for an invalid token (`_authError`); RD has none. In "guaranteed" mode 136 of 163 RD lists came back
-  EMPTY; in "all" mode the viewer silently gets P2P only.
 - **B-003 — a title the archive does not have returns an empty list** (owner: T-103). 25 % of all searches
   (3 215 / 12 937; 670 titles) end in `[MISS] … 0 results` and the viewer gets nothing — not even the info
   row a missing season or film gets (GAP). Mostly 2025–2026 releases (Spider-Man: Brand New Day 385
@@ -41,6 +32,19 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Closed
 
+- **B-010 — the stream cache ignores the debrid mode** (closed by T-102). `configFingerprint`
+  keys on debrid, token, content, quality, sort, sources, size limit and language — not `debridmode`. A list
+  built for "all" (RD + P2P rows) is served to the same token's "guaranteed" install for up to an hour, and
+  the other way round. Seen in the T-102 stub run: the guaranteed request came back with the cached P2P rows.
+- **B-002 — an RD account problem is never shown to the viewer** (closed by T-102). TorBox has a notice row
+  for an invalid token (`_authError`); RD has none. In "guaranteed" mode 136 of 163 RD lists came back
+  EMPTY; in "all" mode the viewer silently gets P2P only.
+- **B-001 — Real-Debrid refusals are swallowed** (closed by T-102). `checkAndResolve` catches every error and
+  returns `null`, so a refused request looks like "not cached" and nothing records why. About 36 % of RD
+  lists with ≥ 4 torrents fail on the FIRST call for every torrent (< 45 ms each; the RD API answers in
+  ~75 ms cold, ~25 ms on a kept connection — a real check is add + info + delete). Example 17.10 22:xx:
+  "Interstellar" — 23 torrents, 0 RD in 0,4 s; a TorBox viewer got 8 cached from the same 23 on 18.10.
+  RD > 0 in 20 % of RD lists vs TorBox > 0 in 48 % of TorBox lists.
 - **B-009 — the replay hides info-row changes** (closed by T-101). `tools/replay/diff.js` counts as info rows
   only streams with neither `infoHash` nor `url`, but every notice row has a `url` (`notice-info.mp4`)
   since v2.1.6 — so a new or lost info row never shows in the diff.

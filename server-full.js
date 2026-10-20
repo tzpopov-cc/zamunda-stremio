@@ -28,7 +28,7 @@ const ZAMUNDA_API = 'https://api-proxy.tzkppv.com';
 const PROVIDERS = (process.env.ZAMUNDA_PROVIDERS || ZAMUNDA_API)
     .split(',').map(x => x.trim()).filter(Boolean);
 const CINEMETA_API = 'https://v3-cinemeta.strem.io/meta';
-const RD_API = 'https://api.real-debrid.com/rest/1.0';
+const RD_API = process.env.RD_API || 'https://api.real-debrid.com/rest/1.0';   // env: the replay's RD stub
 const TB_API = 'https://api.torbox.app/v1';
 
 // Public origin of this addon — used to build absolute stream URLs.
@@ -304,8 +304,9 @@ function configFingerprint(config) {
     const tokenHash = token ? crypto.createHash('md5').update(token).digest('hex').substring(0, 8) : 'none';
     // `lang` MUST be in here: the stream cache keys on this fingerprint, and the notice and
     // hint rows are language-dependent. Without it a Bulgarian response is served to an
-    // English config for the next hour (and vice versa).
-    return `${config.debrid}:${tokenHash}:${config.content}:${config.quality}:${config.sort}:${config.sources}:${config.sizelimit}:${config.lang || 'bg'}`;
+    // English config for the next hour (and vice versa). `debridmode` too (B-010): without it a list built
+    // for "all" (debrid + P2P) was served to the same token's "guaranteed" install for an hour.
+    return `${config.debrid}:${config.debridmode || config.rdmode || 'guaranteed'}:${tokenHash}:${config.content}:${config.quality}:${config.sort}:${config.sources}:${config.sizelimit}:${config.lang || 'bg'}`;
 }
 
 // =====================================================
@@ -1478,6 +1479,35 @@ async function parallelLimit(tasks, limit) {
     return results;
 }
 
+// What Real-Debrid said when it refused — its documented error body ({ error, error_code }) and the HTTP
+// status, never the token. A timeout or a dropped connection has no answer from RD and gives null.
+// Until v2.6.8 every refusal was swallowed and read as "not cached": over 15–20.10.2026 about a third of
+// RD lists failed on the first call for every torrent and nobody could say why (B-001).
+function rdRefusal(e) {
+    const r = e && e.response;
+    if (!r) return null;
+    const code = r.data && Number.isInteger(r.data.error_code) ? r.data.error_code : null;
+    const error = r.data && typeof r.data.error === 'string' ? r.data.error.substring(0, 40) : '';
+    return { status: r.status, code, error };
+}
+// A refusal about the account or about RD itself, not about one torrent: the next torrent of the list gets
+// the same answer, so the list stops and the viewer is told. Error codes from api.real-debrid.com (read
+// 20.10.2026). The code decides first — an infringing file (35) comes with a 503 and is one torrent only;
+// the HTTP status decides only when RD sent no code.
+const RD_ACCOUNT_CODES = {
+    8: 'token',                                         // bad token
+    9: 'premium', 14: 'premium', 15: 'premium', 20: 'premium',   // permission denied, locked, not activated, free user
+    21: 'limit', 23: 'limit', 36: 'limit',              // too many active downloads, traffic exhausted, fair usage
+    5: 'busy', 34: 'busy',                              // slow down, too many requests
+    22: 'ip',                                           // IP address not allowed — the addon's server, not the viewer
+    25: 'down', 37: 'down',                             // service unavailable, disabled endpoint
+};
+function rdAccountProblem(refusal) {
+    if (!refusal) return null;
+    if (refusal.code !== null) return RD_ACCOUNT_CODES[refusal.code] || null;
+    return { 401: 'token', 403: 'premium', 429: 'busy' }[refusal.status] || null;
+}
+
 async function checkAndResolve(magnet, rdToken, want, title, matchType) {
     const headers = { Authorization: `Bearer ${rdToken}` };
     let torrentId;
@@ -1492,18 +1522,18 @@ async function checkAndResolve(magnet, rdToken, want, title, matchType) {
         if (info.status === 'downloaded' && info.links?.length > 0) {
             const ur = await axios.post(`${RD_API}/unrestrict/link`,
                 new URLSearchParams({ link: info.links[0] }), { headers, timeout: 8000 });
-            return ur.data.download;
+            return { url: ur.data.download };
         }
 
         if (info.status !== 'waiting_files_selection' || !info.files) {
             await axios.delete(`${RD_API}/torrents/delete/${torrentId}`, { headers }).catch(() => {});
-            return null;
+            return { url: null };
         }
 
         const videoFiles = info.files.filter(f => /\.(mkv|mp4|avi|mov|m4v|ts|webm|vob)$/i.test(f.path));
         if (videoFiles.length === 0) {
             await axios.delete(`${RD_API}/torrents/delete/${torrentId}`, { headers }).catch(() => {});
-            return null;
+            return { url: null };
         }
 
         // Same rule as TorBox (v2.6.7): the episode in any common spelling, the film out of a
@@ -1512,7 +1542,7 @@ async function checkAndResolve(magnet, rdToken, want, title, matchType) {
             want, title, matchType);
         if (!picked) {
             await axios.delete(`${RD_API}/torrents/delete/${torrentId}`, { headers }).catch(() => {});
-            return null;
+            return { url: null };
         }
         const target = videoFiles.find(f => f.id === picked.id);
 
@@ -1525,20 +1555,45 @@ async function checkAndResolve(magnet, rdToken, want, title, matchType) {
             if (poll.data.status === 'downloaded' && poll.data.links?.length > 0) {
                 const ur = await axios.post(`${RD_API}/unrestrict/link`,
                     new URLSearchParams({ link: poll.data.links[0] }), { headers, timeout: 8000 });
-                return ur.data.download;
+                return { url: ur.data.download };
             }
             if (poll.data.status === 'downloading' || poll.data.status === 'queued') {
                 await axios.delete(`${RD_API}/torrents/delete/${torrentId}`, { headers }).catch(() => {});
-                return null;
+                return { url: null };
             }
         }
         await axios.delete(`${RD_API}/torrents/delete/${torrentId}`, { headers }).catch(() => {});
-        return null;
+        return { url: null };
     } catch (e) {
         if (torrentId) await axios.delete(`${RD_API}/torrents/delete/${torrentId}`,
             { headers: { Authorization: `Bearer ${rdToken}` } }).catch(() => {});
-        return null;
+        return { url: null, refusal: rdRefusal(e) };
     }
+}
+
+// The row that tells an RD viewer why there are no RD links — the TorBox auth notice's twin (B-002).
+function rdNotice(kind, config, p2pCount) {
+    const bg = (config.lang || 'bg') === 'bg';
+    const why = {
+        token: ['Real-Debrid ключът е изтекъл или е невалиден.\nПреконфигурирай добавката с нов ключ.',
+            'Real-Debrid token expired or invalid.\nReconfigure the addon with a new token.'],
+        premium: ['Real-Debrid отказа: профилът няма активен Premium или е заключен.\nПровери абонамента си в real-debrid.com.',
+            'Real-Debrid refused: the account has no active Premium or is locked.\nCheck your subscription at real-debrid.com.'],
+        limit: ['Real-Debrid отказа: лимитът на профила е изчерпан (трафик или активни сваляния).\nОпитай по-късно.',
+            'Real-Debrid refused: the account limit is used up (traffic or active downloads).\nTry again later.'],
+        busy: ['Real-Debrid временно ограничи заявките.\nОпитай отново след минута.',
+            'Real-Debrid is limiting requests for now.\nTry again in a minute.'],
+        down: ['Real-Debrid не отговаря в момента.\nОпитай по-късно.',
+            'Real-Debrid is not answering right now.\nTry again later.'],
+        ip: ['Real-Debrid не приема заявки от сървъра на добавката.\nПроблемът е при добавката, не в профила ти.',
+            'Real-Debrid does not accept requests from the addon\'s server.\nThe problem is on the addon\'s side, not your account.'],
+    }[kind];
+    const tail = p2pCount ? (bg ? `\nПоказваме ${p2pCount} P2P резултата.` : `\nShowing ${p2pCount} P2P results.`) : '';
+    return {
+        name: bg ? `⚠️ Real-Debrid грешка\nZamunda BG` : `⚠️ Real-Debrid error\nZamunda BG`,
+        title: (bg ? why[0] : why[1]) + tail,
+        url: NOTICE_INFO_URL,
+    };
 }
 
 // =====================================================
@@ -2312,27 +2367,50 @@ async function resolveStreams(type, fullId, config) {
     if (hasRD) {
         console.log(`  RD mode (${debridMode}): checking ${filtered.length} torrents...`);
         const startTime = Date.now();
-        const tasks = filtered.map((torrent, idx) => async () => {
-            const url = await checkAndResolve(torrent.link, config.rdtoken, want, torrent.title, torrent._matchType);
+        let accountProblem = null;   // the first account-level refusal — the torrents not yet asked are skipped
+        const refused = {};          // every refusal, "403 permission_denied" -> count, for the log line
+        const tasks = filtered.map((torrent) => async () => {
+            if (accountProblem) return { torrent, url: null };
+            const { url, refusal } = await checkAndResolve(torrent.link, config.rdtoken, want, torrent.title, torrent._matchType);
             if (url) console.log(`  ✅ ${torrent._quality.tag} ${torrent.title.substring(0, 50)}`);
+            if (refusal) {
+                const why = `${refusal.status} ${refusal.error || refusal.code || ''}`.trim();
+                refused[why] = (refused[why] || 0) + 1;
+                const kind = rdAccountProblem(refusal);
+                if (kind && !accountProblem) accountProblem = { kind, why };
+            }
             return { torrent, url };
         });
         const results = await parallelLimit(tasks, 2);
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        const refusedNote = Object.keys(refused).length
+            ? ` (RD refused: ${Object.entries(refused).map(([why, n]) => `${why} ×${n}`).join(', ')})` : '';
 
         const rdStreams = results.filter(r => r.url).map(({ torrent, url }) => buildStream(torrent, url, 'rd'));
+
+        // RD refused the account (or the addon's server) before a single link: say so and fall back to
+        // P2P, in both modes — the TorBox auth error does the same. Not cached: the next ask may pass.
+        if (accountProblem && rdStreams.length === 0) {
+            const p2pStreams = dropDeadP2P(filtered).map(t => buildStream(t, null, 'p2p'));
+            console.log(`  → RD refused (${accountProblem.kind}: ${accountProblem.why}), ${p2pStreams.length} P2P fallback in ${elapsed}s`);
+            logEvent('RD', `0 RD (refused: ${accountProblem.kind}) + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"${refusedNote}`);
+            if (accountProblem.kind === 'ip' || accountProblem.kind === 'down') logEvent('ERROR', `RD ${accountProblem.kind}: ${accountProblem.why}`);
+            const out = [...hints, rdNotice(accountProblem.kind, config, p2pStreams.length), ...p2pStreams];
+            out._noCache = true;
+            return out;
+        }
 
         if (debridMode === 'all') {
             const resolvedHashes = new Set(results.filter(r => r.url).map(r => r.torrent._infohash));
             const p2pStreams = dropDeadP2P(filtered.filter(t => !resolvedHashes.has(t._infohash)))
                 .map(t => buildStream(t, null, 'p2p'));
-            console.log(`  → ${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s`);
-            logEvent('RD', `${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"`);
+            console.log(`  → ${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s${refusedNote}`);
+            logEvent('RD', `${rdStreams.length} RD + ${p2pStreams.length} P2P in ${elapsed}s — "${meta.name}"${refusedNote}`);
             return [...hints, ...rdStreams, ...p2pStreams];
         }
 
-        console.log(`  → ${rdStreams.length} playable in ${elapsed}s`);
-        logEvent('RD', `${rdStreams.length} playable in ${elapsed}s — "${meta.name}"`);
+        console.log(`  → ${rdStreams.length} playable in ${elapsed}s${refusedNote}`);
+        logEvent('RD', `${rdStreams.length} playable in ${elapsed}s — "${meta.name}"${refusedNote}`);
         return [...hints, ...rdStreams];
     }
 

@@ -44,3 +44,4 @@ After the log review of 20.10.2026 (docker logs 15–20.10, 12 937 searches — 
 
 - 20.10.2026: loop set up. Bugs B-001…B-009 from the log review; stage 1 = T-101…T-107, stage 2 = T-201.
 - 20.10.2026: T-101 ✅ — the replay shows info rows; 23 targeted ids. Baseline shows B-003…B-006. Next T-102.
+- 20.10.2026: T-102 ✅ — RD says why it refused, stops after 2 calls, notice + P2P (B-001, B-002); found and fixed B-010 (cache ignored debrid mode); replay compares RD rows. Next T-103.

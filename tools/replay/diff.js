@@ -8,10 +8,12 @@ let same = 0; const lost = [], gained = [], idx = [], info = [], errs = [];
 for (const [k, o] of O) {
     const n = N.get(k); if (!n) continue;
     if (o.error || n.error) errs.push(`${k} old:${o.error || 'ok'} new:${n.error || 'ok'}`);
-    const rows = r => new Map(r.streams.filter(s => s.infoHash).map(s => [s.infoHash, s]));
+    // A row is a torrent (by infoHash) or a debrid link (by release name — the link itself differs per run);
+    // an info row is a notice (url to notice-*.mp4) or a stream with nothing to play.
+    const isInfo = s => !s.infoHash && (!s.url || /\/notice-[a-z]+\.mp4$/.test(s.url));
+    const rows = r => new Map(r.streams.filter(s => !isInfo(s)).map(s => [s.infoHash || `debrid:${s.title}`, s]));
     const ro = rows(o), rn = rows(n);
-    // An info row is any stream without an infoHash: notice rows carry a url to notice-*.mp4 (since v2.1.6).
-    const infoOf = r => r.streams.filter(s => !s.infoHash).map(s => s.name.split(' | ')[0]).join(', ');
+    const infoOf = r => r.streams.filter(isInfo).map(s => s.name.split(' | ')[0]).join(', ');
     let changed = false;
     for (const [h, s] of ro) if (!rn.has(h)) { lost.push(`${k}  ${s.title}`); changed = true; }
     for (const [h, s] of rn) if (!ro.has(h)) { gained.push(`${k}  ${s.title}`); changed = true; }
