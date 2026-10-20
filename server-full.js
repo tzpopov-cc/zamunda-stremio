@@ -1119,9 +1119,14 @@ function matchesEpisode(title, season, episode) {
     }
 
     // 3. Episode range: S01E01-03, "1_-_293", "101-114", "01 ~ 100"
-    // Flexible: handles _-_, spaces, ~, plain dash as separators
+    // Flexible: handles _-_, spaces, ~, plain dash as separators. A range that names no season is
+    // season 1's, like the absolute numbers above: "[SFS] Hunter x Hunter - 01 - 21 (Hunter Exam Arc)"
+    // was offered for S2E3 and S3E5, and "01 - 148" counts on past season 1 where Stremio restarts at 1
+    // (B-028, v2.6.9).
     const rangePatterns = [
         new RegExp(`S${s}E(\\d+)\\s*[-–]\\s*(\\d+)`),                   // S01E01-03
+    ];
+    if (sInt === 1) rangePatterns.push(
         /(\d+)\s*[-–_~]+\s*(\d+)\s*[\[\(]/,                             // "101-114 [720p]"
         /(\d+)\s*[-–_~]+\s*(\d+)\s*$/,                                  // "1-293" at end
         /[_\s.-]+(\d+)\s*[_\s]*[-–~]+\s*[_\s]*(\d+)(?:\s*[\[\(]|\s*$|[_\s]+)/,  // "1_-_293", "01 ~ 100"
@@ -1129,7 +1134,7 @@ function matchesEpisode(title, season, episode) {
         // need the range preceded by _ . - or space, or followed directly by [ or ( — the
         // enclosing brackets defeat both, which is how a 24-episode batch matched nothing.
         /[\[\(](\d+)\s*[-–_~]+\s*(\d+)[\]\)]/,
-    ];
+    );
     for (const p of rangePatterns) {
         const m = t.match(p);
         if (m) {

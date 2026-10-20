@@ -5,6 +5,10 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
+- **B-029 — a show name's words in another order pass the show check** (owner: T-212). Found by the T-211 replay:
+  "[RyuKo-JB] Eden of the East 01-11 + Movies" (an anime) is offered for East of Eden (2026) S1E1. When the name's
+  words do not stand together, the show check falls back to the old rule (the furthest first word) and accepts
+  "eden … east" for "east … eden".
 - **B-027 — a title beyond the archive's first 50 rows is called missing** (owner: T-210). Found by the T-201
   bug hunt pass 2: the archive answers at most 50 rows, newest first, and matches every word as a substring, so
   "Hunter X Hunter" is a search for "hunter" + "x" (in every "x264") — 796 rows, the 2011 series ("[SFS] Hunter x

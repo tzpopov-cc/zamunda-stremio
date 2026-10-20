@@ -46,3 +46,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 - [x] **T-209** A show name with a repeated word ("Hunter x Hunter") passes the show check for its own releases (B-026).
 - [ ] **T-210** A full first page of a name search with nothing of the title in it is read further (next pages,
       capped and cached) before the title is called missing (B-027).
+- [x] **T-211** An episode range that names no season ("01 - 21", "1-293") counts for season 1 only, like the
+      absolute episode numbers (B-028). Before T-210, which reaches such packs for later seasons.
+- [ ] **T-212** A show name's words in another order ("Eden of the East" for East of Eden) do not pass the show
+      check (B-029).
