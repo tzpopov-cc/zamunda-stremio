@@ -10,10 +10,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   "%" sequence ("…tbtoken%3Dab%25zz…") makes `decodeURIComponent` throw — the manifest answers 500 with an HTML stack
   trace showing the server's file paths, the TorBox play route never answers (an unhandled rejection), the stream
   route returns []. The config page never builds such a link; a hand-edited or damaged one does.
-- **B-032 — an install link from v2.0.0 loses its "debrid + P2P" choice** (owner: T-215). Found by the T-201 bug hunt
-  pass 3: links built 15–17.04.2026 say `rdmode=all`; the server reads `config.debridmode || config.rdmode`, but
-  `debridmode` always holds the default 'guaranteed', so such a viewer gets no P2P fallback. Whether any such link
-  still reaches the server cannot be seen in the logs (they show the parsed mode, not the link).
 - **B-025 — a later series of the same name is offered for the earlier one** (no owner yet — needs a check
   first). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
   the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
@@ -25,6 +21,10 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-032 — an install link from v2.0.0 loses its "debrid + P2P" choice** (found by the T-201 bug hunt pass 3, closed by T-215): links built 15–17.04.2026 say `rdmode=all`; the server reads `config.debridmode || config.rdmode`, but
+  `debridmode` always holds the default 'guaranteed', so such a viewer gets no P2P fallback. Whether any such link
+  still reaches the server cannot be seen in the logs (they show the parsed mode, not the link).
+
 - **B-030 — a film whose Cinemeta year is two off is called missing** (found by the T-201 bug hunt pass 3, closed by T-214): The Witch: Part 1 - The Subversion — Cinemeta says 2020 (a later release date), the film and its only
   release are 2018 ("The.Witch.Part.1.The.Subversion.2018.1080p.BluRay"); the year check allows ±1, so the viewer is
   told „Няма го в архива".

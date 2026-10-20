@@ -292,10 +292,15 @@ const DEFAULTS = {
 function parseConfig(configStr) {
     const config = { ...DEFAULTS };
     if (!configStr || configStr === 'configure') return config;
+    const given = {};
     configStr.split('|').forEach(part => {
         const [key, val] = part.split('=');
-        if (key && val !== undefined) config[key.toLowerCase()] = val;
+        if (key && val !== undefined) given[key.toLowerCase()] = val;
     });
+    Object.assign(config, given);
+    // Links made by v2.0.0 (15–17.04.2026) name the mode `rdmode`. The default `debridmode` always won over it, so
+    // "debrid + P2P" (rdmode=all) was read as debrid only (B-032, v2.6.9).
+    if (given.rdmode && !given.debridmode) config.debridmode = given.rdmode;
     return config;
 }
 

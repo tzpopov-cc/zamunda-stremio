@@ -54,5 +54,5 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       described as the 1994–1995 TV series is not offered for Aladdin (2019) (B-031).
 - [x] **T-214** A film whose long name matches a release exactly allows two years of difference: Cinemeta's 2020 for
       The Witch: Part 1 - The Subversion, released 2018 (B-030).
-- [ ] **T-215** A v2.0.0 install link's `rdmode=all` is read as "debrid + P2P" again (B-032).
+- [x] **T-215** A v2.0.0 install link's `rdmode=all` is read as "debrid + P2P" again (B-032).
 - [ ] **T-216** A config with a broken "%" sequence gets a plain answer — no stack trace, no hung request (B-033).
