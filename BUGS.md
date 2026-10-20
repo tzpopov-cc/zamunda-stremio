@@ -5,11 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-005 — Roman and Arabic numbers are different words** (owner: T-104). `matchesMovie` rejects
-  "Extraction.2.2023…" for "Extraction II" (2023), "Rocky.2.1979" for "Rocky II", "Toy.Story.II.1999" for
-  "Toy Story 2", "Kung.Fu.Panda.IV" for "Kung Fu Panda 4", "The.Godfather.Part.2" for "The Godfather Part
-  II". The archive returns 0 rows for "The Karate Kid Part II" but has "The Karate Kid 2 (1986) [BG Audio]"
-  (found by "Karate Kid 2" and "Karate Kid 1986").
 - **B-006 — a missing season loses its explanation when a stray release names another season** (owner:
   T-105). "Sheriff Country" S2E2: the results hold "Fire Country S02E06 Alert the Sheriff…", which passes the
   show-name check, adds season 2 and episode 2 to the "available" sets, and the viewer gets an empty list
@@ -23,6 +18,11 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Closed
 
+- **B-005 — Roman and Arabic numbers are different words** (closed by T-104). `matchesMovie` rejects
+  "Extraction.2.2023…" for "Extraction II" (2023), "Rocky.2.1979" for "Rocky II", "Toy.Story.II.1999" for
+  "Toy Story 2", "Kung.Fu.Panda.IV" for "Kung Fu Panda 4", "The.Godfather.Part.2" for "The Godfather Part
+  II". The archive returns 0 rows for "The Karate Kid Part II" but has "The Karate Kid 2 (1986) [BG Audio]"
+  (found by "Karate Kid 2" and "Karate Kid 1986").
 - **B-004 — archive rows without an infohash are dropped silently** (closed by T-103). 7,9 % of all archive
   rows seen (11 303 / 142 784, all source `z`, mostly old SD/DVD films) carry `magnet:?xt=urn:btih:&dn=…`.
   `extractInfohash` fails, the row is dropped, and the title reads "0 results" — e.g. "The Unbearable

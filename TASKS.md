@@ -13,7 +13,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 - [x] **T-103** A title with nothing usable in the archive gets an info row instead of an empty list: "not in
       the archive" (B-003), and "in the archive, but without a download link" when every row lacks a hash
       (B-004). Logged as GAP so the dashboard counts it as told.
-- [ ] **T-104** Roman ↔ Arabic sequel numbers in search queries and in film/series matching ("II" = "2",
+- [x] **T-104** Roman ↔ Arabic sequel numbers in search queries and in film/series matching ("II" = "2",
       "Part II" = "2") without matching unrelated titles (B-005).
 - [ ] **T-105** The "season/episode not in the archive" explanation counts only the show's own releases
       (B-006).

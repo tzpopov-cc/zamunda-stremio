@@ -1791,8 +1791,31 @@ function sortTorrents(torrents, config) {
 // apostrophe) is folded back first so it lands on the same word. Accents are folded too —
 // "Léon" is released as "Leon". Both sides of every comparison go through here, so any
 // over-joining is symmetric and cannot create a mismatch.
+// Sequel numbers are written both ways: "Extraction II" is released as "Extraction.2.2023", "Toy Story 2" as
+// "Toy.Story.II.1999", "The Karate Kid Part II" as "The Karate Kid 2 (1986)" (B-005, v2.6.8). Both sides of
+// every comparison fold to the plain number. I, V and X stay words — "V for Vendetta", "X" (2022), "Malcolm X",
+// "I, Robot" — and "Part" goes only in front of a number ("Dune: Part Two" = "Dune.2").
+const ROMAN_NUMBER = { ii: 2, iii: 3, iv: 4, vi: 6, vii: 7, viii: 8, ix: 9, xi: 11, xii: 12, xiii: 13, xiv: 14,
+    xv: 15, xvi: 16, xvii: 17, xviii: 18, xix: 19, xx: 20 };
+const SPELLED_NUMBER = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+const ROMAN_TOKEN = /(?<![\p{L}\p{N}])(ii|iii|iv|vi|vii|viii|ix|xi|xii|xiii|xiv|xv|xvi|xvii|xviii|xix|xx)(?![\p{L}\p{N}])/gu;
+function foldSequel(s) {                 // s: lower case, single spaces
+    return s.replace(ROMAN_TOKEN, r => ROMAN_NUMBER[r])
+        .replace(/(^| )part (one|two|three|four|five|six|seven|eight|nine|ten)(?= |$)/g, (m, sp, w) => `${sp}part ${SPELLED_NUMBER[w]}`)
+        .replace(/(^| )part (\d{1,2})(?= |$)/g, '$1$2');
+}
+// The archive matches every word of a query, so "The Karate Kid Part II" finds nothing where "The Karate
+// Kid 2" finds the 1986 film. The plain-number twin of a name, or null when there is nothing to change.
+function plainNumberQuery(q) {
+    const out = q.replace(/(?<![\p{L}\p{N}])(II|III|IV|VI|VII|VIII|IX|XI|XII|XIII|XIV|XV|XVI|XVII|XVIII|XIX|XX)(?![\p{L}\p{N}])/gu, r => ROMAN_NUMBER[r.toLowerCase()])
+        .replace(/\bPart\s+(One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten)\b/gi, (m, w) => `Part ${SPELLED_NUMBER[w.toLowerCase()]}`)
+        .replace(/[:\s-]*\bPart\s+(\d{1,2})\b/gi, ' $1')
+        .replace(/\s+/g, ' ').trim();
+    return out !== q ? out : null;
+}
+
 function normalizeTitle(s) {
-    return (s || '')
+    return foldSequel((s || '')
         .normalize('NFD').replace(/[̀-ͯ]/g, '')   // é→e (also й→и — harmless, both sides fold)
         .toLowerCase()
         .replace(/(\p{L})_(s|t|d|m|ll|re|ve)(?=[_.\s]|$)/gu, "$1'$2")
@@ -1800,7 +1823,7 @@ function normalizeTitle(s) {
         .replace(/[._]+/g, ' ')               // dots/underscores → spaces
         .replace(/[^\p{L}\p{N}\s]/gu, ' ')    // strip punctuation (keep Cyrillic via \p{L})
         .replace(/\s+/g, ' ')
-        .trim();
+        .trim());
 }
 
 function parseYear(v) {
@@ -2023,6 +2046,12 @@ async function resolveStreams(type, fullId, config) {
         queries.push(`${meta.name} S${s}`);
         // Search "Friends S01E05" for the specific episode
         if (e) queries.push(`${meta.name} S${s}E${e}`);
+    }
+
+    // Sequel numbers both ways (B-005): "The Karate Kid Part II" is in the archive as "The Karate Kid 2".
+    for (const q of [...queries]) {
+        const plain = plainNumberQuery(q);
+        if (plain && !queries.includes(plain)) queries.push(plain);
     }
 
     // The apostrophe splits the archive in two. The server drops it from the query, so
