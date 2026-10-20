@@ -9,18 +9,19 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   first). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
   the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
   revival filed under the old show (Twin Peaks S03 2017 under 1990–1991) would read the same way, so it is not
-  folded into T-208.
-- **B-024 — a film of the same name is offered for a series** (owner: T-208). Found by the T-201 bug hunt pass 2:
-  Carrie (2026) S1E1 → 21 rows of the 1976 and 2013 films ("Carrie.2013.1080p.BluRay", "Carrie.BDRip.XviD-WAR");
-  Below (2026) S1E1 → "Below.2002"; Tom & Jerry (1940–1967) S1E1 → "Tom.and.Jerry.2021.MULTi.COMPLETE.BLURAY".
-  The first two come from the "bare show name" fallback; the third reads "COMPLETE" (a full Blu-ray disc) as a
-  complete-series pack.
-
+  folded into T-208. Same kind: "Death Note - 01 (2015 Drama Series)" (the live-action drama) offered for the
+  2006 anime S1E1 (T-208 replay).
 - **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
   answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-024 — a film of the same name is offered for a series** (found by the T-201 bug hunt pass 2, closed by T-208). Found by the T-201 bug hunt pass 2:
+  Carrie (2026) S1E1 → 21 rows of the 1976 and 2013 films ("Carrie.2013.1080p.BluRay", "Carrie.BDRip.XviD-WAR");
+  Below (2026) S1E1 → "Below.2002"; Tom & Jerry (1940–1967) S1E1 → "Tom.and.Jerry.2021.MULTi.COMPLETE.BLURAY".
+  The first two come from the "bare show name" fallback; the third reads "COMPLETE" (a full Blu-ray disc) as a
+  complete-series pack.
+
 - **B-023 — a P2P pack whose file list lacks the episode is still offered** (found by the T-203 replay, closed by T-207). Found by the T-203
   replay: "Stranger Things S05 Vol.2 2025" — its file list (known, from itorrents) holds chapters 5–7 — is offered
   for S5E1 with no file index, so the player opens whatever it picks. TorBox and Real-Debrid already give no link

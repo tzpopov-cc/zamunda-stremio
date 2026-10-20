@@ -2055,6 +2055,33 @@ function isBareShowPack(title, name, bgName) {
     return isJustTheName(head, headTokens(name)) || (!!bgName && isJustTheName(head, headTokens(bgName)));
 }
 
+// The years a show ran, from Cinemeta's "2012–2015" / "2026–" / "2026". An open end runs to next year.
+function showRun(meta) {
+    const info = String(meta.releaseInfo || meta.year || '');
+    const ys = info.match(/(?:19|20)\d{2}/g);
+    if (!ys) return null;
+    const from = Number(ys[0]);
+    const to = ys[1] ? Number(ys[1]) : /(?:19|20)\d{2}\s*[–-]\s*$/.test(info) ? new Date().getFullYear() + 1 : from;
+    return [from, to];
+}
+
+// The release names years and they fall outside the show's run (±1). They are read as one span, so a collection
+// "(2002-2023)" covers Naruto Shippuden's 2007–2017.
+function outsideRun(t, run) {
+    if (!run) return false;
+    const years = torrentYears(t.title);
+    return years.length > 0 && (Math.max(...years) < run[0] - 1 || Math.min(...years) > run[1] + 1);
+}
+
+// A release named only as the show is the show unless something says it is a film: the archive files it under
+// films (documentaries aside — series live there too) or Blu-ray discs, or its years are outside the show's run.
+// "Carrie.2013.1080p.BluRay" and "Carrie.BDRip.XviD-WAR" (Филми) were 21 rows for the series Carrie (2026) S1E1,
+// "Below.2002" for Below (2026) (B-024).
+function looksLikeFilm(t, run) {
+    const cat = (t.category || '').toLowerCase();
+    return (cat.startsWith('филми') && !cat.includes('документ')) || cat.startsWith('blu-ray') || outsideRun(t, run);
+}
+
 function matchesMovie(title, name, year, bgName) {
     const prefix = torrentTitlePrefix(title);
     const n = normalizeTitle(name);
@@ -2252,9 +2279,15 @@ async function resolveStreams(type, fullId, config) {
         }
         allTorrents = onShow;
 
+        // A "complete" pack that names no season ("COMPLETE", "COLLECTION") is the show unless it is a full Blu-ray disc
+        // or its years are outside the show's run: "Tom.and.Jerry.2021.MULTi.COMPLETE.BLURAY" is the 2021 film, not Tom &
+        // Jerry 1940–1967. The films category is no sign here, complete series are filed there too ("FRIENDS.Complete",
+        // "Avatar: The Last Airbender (Complete) (2005-2008)") (B-024).
+        const run = showRun(meta);
+        const filmPack = t => !hasSeasonInfo(t.title) && ((t.category || '').toLowerCase().startsWith('blu-ray') || outsideRun(t, run));
         const matched = allTorrents.map(t => ({
             ...t, _matchType: matchesEpisode(t.title, season, episode)
-        })).filter(t => t._matchType !== null);
+        })).filter(t => t._matchType !== null && !(t._matchType === 'season' && filmPack(t)));
         console.log(`  ${matched.length} match S${season}E${episode}`);
 
         if (matched.length > 0) {
@@ -2288,7 +2321,8 @@ async function resolveStreams(type, fullId, config) {
             const fallback = showHasSeasons ? [] : allTorrents.filter(t => {
                 const u = t.title.toUpperCase();
                 return !/S\d|SEASON\s*\d|SERIES\s*\d|СЕЗОН|E\d|EP\d|\d+[-–~]\d+/.test(u)
-                    && names.some(n => isBareShowPack(t.title, n, meta.bulgarian_name));
+                    && names.some(n => isBareShowPack(t.title, n, meta.bulgarian_name))
+                    && !looksLikeFilm(t, run);
             }).map(t => ({ ...t, _matchType: 'fallback' }));
 
             if (fallback.length > 0) {

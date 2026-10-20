@@ -41,5 +41,5 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       releases, instead of an empty list (B-021).
 - [x] **T-206** A pack whose name carries no quality is not labelled 4K/1080p by its total size (B-022).
 - [x] **T-207** A P2P pack whose known file list lacks the episode is not offered for it (B-023).
-- [ ] **T-208** A film of the same name is not offered for a series: a bare-named release or a "complete" pack that
+- [x] **T-208** A film of the same name is not offered for a series: a bare-named release or a "complete" pack that
       looks like a film (filed as a film or Blu-ray disc, or years outside the show's run) is left out (B-024).
