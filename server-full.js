@@ -2148,6 +2148,15 @@ async function resolveStreams(type, fullId, config) {
         return true;
     });
     console.log(`  ${allTorrents.length} unique torrents`);
+    // Games, music and software are never offered (applyFilters), so they must not decide the answer either: "Haunted
+    // Hotel 2 - Believe the Lies" (a game) passed as Haunted Hotel S2E3 and hid „Няма сезон 2", an album named
+    // "Lanterns" stood for the show, a Linux game for the film Digger (B-020, v2.6.9).
+    const nonVideo = allTorrents.filter(t => !isVideoCategory(t)).length;
+    if (nonVideo) {
+        allTorrents = allTorrents.filter(isVideoCategory);
+        console.log(`  ${nonVideo} not films or series (games, music…) left out`);
+    }
+    for (let i = hashless.length - 1; i >= 0; i--) if (!isVideoCategory(hashless[i])) hashless.splice(i, 1);
     // Is a (hashless) row this film / this episode? The same tests the playable rows go through below.
     const isThisTitle = t => type === 'movie'
         ? ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name))
@@ -2165,7 +2174,7 @@ async function resolveStreams(type, fullId, config) {
             logEvent('GAP', `${label} — ${hashless.length} results, all without a link [${hashless.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
             return [noLinkRow(config, meta.name, titleYear)];
         }
-        logEvent('GAP', `${label} — 0 results from zamunda${hashless.length ? ` (${hashless.length} without a link, none this title)` : ''}`);
+        logEvent('GAP', `${label} — 0 results from zamunda${nonVideo ? ` (${nonVideo} not films or series)` : ''}${hashless.length ? ` (${hashless.length} without a link, none this title)` : ''}`);
         return [notInArchiveRow(config, meta.name, titleYear)];
     }
 
@@ -2188,8 +2197,13 @@ async function resolveStreams(type, fullId, config) {
         };
         const onShow = allTorrents.filter(t => nameOf(t) && (!byAltOnly(t) || altSeasonOk(t)));
         if (!onShow.length) {
-            logEvent('MISS', `${label} — ${beforeCount} results, none carry the show name [${allTorrents.slice(0, 3).map(t => t.title).join(' | ')}]`);
-            return [];
+            // Nothing here is this episode. Releases under the show's romaji name ("Tensei shitara Slime Datta Ken 2nd
+            // Season", a film, an OVA for Slime S4) mean the show IS in the archive, just not this episode: their
+            // seasons cannot be named reliably ("2nd Season"), so the row names none. No such release: the show is
+            // not in the archive (B-020).
+            const underAltName = allTorrents.some(t => nameOf(t) && byAltOnly(t));
+            logEvent('GAP', `${label} — ${beforeCount} results, none carry the show name${underAltName ? ' (only under another name)' : ''} [${allTorrents.slice(0, 3).map(t => t.title).join(' | ')}]`);
+            return [underAltName ? episodeNotFoundRow(config, meta.name, season, episode) : notInArchiveRow(config, meta.name, parseYear(meta.year || meta.releaseInfo))];
         }
         if (onShow.length < beforeCount) {
             console.log(`  ${onShow.length}/${beforeCount} carry the show name`);
@@ -2218,8 +2232,8 @@ async function resolveStreams(type, fullId, config) {
             // for Brothers (replay and review 20.10.2026, v2.6.8).
             const ownName = allTorrents.some(t => !prefixOf(t));
             if (!plain.length && (!ownName || new Set(matched.map(prefixOf)).size > 1 || matched.length < 2)) {
-                logEvent('MISS', `${label} — ${matched.length} episode matches, all under a longer name [${matched.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
-                return [];
+                logEvent('GAP', `${label} — ${matched.length} episode matches, all under a longer name [${matched.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
+                return [episodeNotFoundRow(config, meta.name, season, episode)];
             }
             allTorrents = plain.length ? plain : matched;
         } else {
@@ -2257,15 +2271,8 @@ async function resolveStreams(type, fullId, config) {
                 let detail = '';
                 let missRow = null;
                 if (seasons.size > 0 && !seasons.has(season)) {
-                    const avail = [...seasons].sort((a, b) => a - b).map(s => `S${String(s).padStart(2, '0')}`).join(',');
-                    detail = ` (available: ${avail})`;
-                    missRow = {
-                        name: bgLang ? `ℹ️ Няма сезон ${season}\nZamunda BG` : `ℹ️ No season ${season}\nZamunda BG`,
-                        title: bgLang
-                            ? `Сезон ${season} го няма в архива.\nВ архива има: ${avail}`
-                            : `Season ${season} is not in the archive.\nThe archive has: ${avail}`,
-                        url: NOTICE_INFO_URL,
-                    };
+                    missRow = noSeasonRow(config, season, seasons);
+                    detail = ` (available: ${[...seasons].sort((a, b) => a - b).map(s => `S${String(s).padStart(2, '0')}`).join(',')})`;
                 } else if (episodes.size > 0 && !episodes.has(episode)) {
                     const maxEp = Math.max(...episodes);
                     const latest = `E${String(maxEp).padStart(2, '0')}`;
@@ -2278,10 +2285,16 @@ async function resolveStreams(type, fullId, config) {
                         url: NOTICE_INFO_URL,
                     };
                 }
+                // Releases of the show, but none names a season or an episode to point at (Detective Hole ← the film
+                // "Detective.Dee…Hole.2023", Formula 1 S77 ← race weekends): still a row, not an empty list (B-020).
+                if (!missRow) {
+                    missRow = episodeNotFoundRow(config, meta.name, season, episode);
+                    detail = ' (nothing to name)';
+                }
                 const titles = allTorrents.slice(0, 3).map(t => t.title.substring(0, 80));
                 // GAP = the viewer is told why (info row); MISS = they got nothing at all.
-                logEvent(missRow ? 'GAP' : 'MISS', `${label} — ${beforeCount} torrents but 0 episode matches${detail} [${titles.join(' | ')}]`);
-                return missRow ? [missRow] : [];
+                logEvent('GAP', `${label} — ${beforeCount} torrents but 0 episode matches${detail} [${titles.join(' | ')}]`);
+                return [missRow];
             }
         }
     }
@@ -2323,6 +2336,23 @@ async function resolveStreams(type, fullId, config) {
         // fallback that serves streams is not a miss, and counting it as one inflated the
         // dashboard's miss rate.
         const logMiss = () => logEvent('MISS', `${label} — ${allTorrents.length} torrents but 0 after filters (${config.content}|${config.quality}) [${sampleTitles.join(' | ')}]`);
+        // The viewer's own size limit removed every torrent: say so, it is a setting they can change (B-020).
+        // Only when it alone is the reason: nothing under the limit in any quality, with or without BG audio.
+        const overLimit = () => {
+            if (!config.sizelimit) return null;
+            const open = { ...config, content: 'all', quality: DEFAULTS.quality };
+            const n = applyFilters(allTorrents, { ...open, sizelimit: '' }, type).length;
+            if (!n || applyFilters(allTorrents, open, type).length) return null;
+            logEvent('GAP', `${label} — ${n} torrents, all over the size limit ${config.sizelimit}`);
+            const bg = (config.lang || 'bg') === 'bg';
+            return [{
+                name: bg ? 'ℹ️ Над ограничението\nZamunda BG' : 'ℹ️ Over your size limit\nZamunda BG',
+                title: bg
+                    ? `${n === 1 ? 'Единственият торент' : `Всички ${n} торента`} за „${meta.name}“ ${n === 1 ? 'е' : 'са'} над ограничението ти за размер.\nПромени го в настройките на добавката.`
+                    : `${n === 1 ? 'The only torrent' : `All ${n} torrents`} for "${meta.name}" ${n === 1 ? 'is' : 'are'} over your size limit.\nChange it in the addon settings.`,
+                url: NOTICE_INFO_URL,
+            }];
+        };
 
         // If BG audio filter is the reason, fall back to showing all results with a hint
         if (config.content === 'bgaudio' && allTorrents.length > 0) {
@@ -2335,6 +2365,8 @@ async function resolveStreams(type, fullId, config) {
             if (filtered.length > 0) {
                 config._bgFallback = true; // flag to prepend hint stream later
             } else {
+                const limitRow = overLimit();
+                if (limitRow) return limitRow;
                 logMiss();
                 return [];
             }
@@ -2350,10 +2382,14 @@ async function resolveStreams(type, fullId, config) {
                 if (filtered.length > 0) {
                     config._qualityFallback = true;
                 } else {
+                    const limitRow = overLimit();
+                    if (limitRow) return limitRow;
                     logMiss();
                     return [];
                 }
             } else {
+                const limitRow = overLimit();
+                if (limitRow) return limitRow;
                 logMiss();
                 return [];
             }
@@ -2574,6 +2610,27 @@ function notInArchiveRow(config, name, year) {
         title: bg
             ? `${what} го няма в архива.${isNew ? '\nАрхивът не получава нови торенти, затова новите заглавия липсват.' : ''}`
             : `${what} is not in the archive.${isNew ? '\nThe archive gets no new torrents, so new titles are missing.' : ''}`,
+        url: NOTICE_INFO_URL,
+    };
+}
+// Season N is not in the archive; the seasons it has.
+function noSeasonRow(config, season, seasons) {
+    const bg = (config.lang || 'bg') === 'bg';
+    const avail = [...seasons].sort((a, b) => a - b).map(s => `S${String(s).padStart(2, '0')}`).join(',');
+    return {
+        name: bg ? `ℹ️ Няма сезон ${season}\nZamunda BG` : `ℹ️ No season ${season}\nZamunda BG`,
+        title: bg ? `Сезон ${season} го няма в архива.\nВ архива има: ${avail}` : `Season ${season} is not in the archive.\nThe archive has: ${avail}`,
+        url: NOTICE_INFO_URL,
+    };
+}
+// Releases of the show, but none for this episode and nothing that names what is there (B-020).
+function episodeNotFoundRow(config, name, season, episode) {
+    const bg = (config.lang || 'bg') === 'bg';
+    return {
+        name: bg ? 'ℹ️ Не е намерен\nZamunda BG' : 'ℹ️ Not found\nZamunda BG',
+        title: bg
+            ? `Сезон ${season}, епизод ${episode} на „${name}“ не е намерен в архива.`
+            : `Season ${season}, episode ${episode} of "${name}" was not found in the archive.`,
         url: NOTICE_INFO_URL,
     };
 }

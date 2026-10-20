@@ -35,7 +35,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       matched in its joined form ("Chicago PD") (B-018).
 - [x] **T-203** A release name with underscores is read like one with spaces — season packs found, no wrong
       season (B-019).
-- [ ] **T-204** Every dead end with a known reason gets a row: non-video rows leave before matching; "none carry
+- [x] **T-204** Every dead end with a known reason gets a row: non-video rows leave before matching; "none carry
       the show name", "no season/episode to name" and "all under a longer name" get an honest row (B-020).
 - [ ] **T-205** „Само кеширани" with nothing cached (RD or TorBox) gets a row saying so and how to see the P2P
       releases, instead of an empty list (B-021).

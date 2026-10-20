@@ -18,19 +18,19 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   series/animation rows in the replay cache: "SOUTHPARK Season 01-27" (105,94 GB) shows as 4K and sorts above real
   1080p episodes, "Chicago PD s01" (7,08 GB, XviD by the archive text) as 1080p, "Sleepy Hollow s03" (XviD) as
   1080p. A quality filter keeps or drops them by that guess. The size rule was written for single files.
-- **B-020 — a dead end with a known reason still returns an empty list** (owner: T-204). In the bug-hunt pass
-  (361 ids on v2.6.8) 25 lists were empty: (a) a game or a music album passes as the title before the category
-  filter drops it — "Haunted Hotel 2 - Believe the Lies" (game) for Haunted Hotel S2E3 instead of „Няма сезон
-  2" (the archive has S01), "36 Crazyfists - Lanterns" (album) for Lanterns, a Linux game for Digger (2026);
-  (b) "none carry the show name" (Hunter X Hunter — not in the archive under any spelling, Last Seen, Slime S4);
-  (c) show releases but no season/episode to name (Detective Hole ← the film "Detective.Dee…Hole.2023",
-  Formula 1 S77); (d) the T-105 "all under a longer name" path.
 - **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
   answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
 
+- **B-020 — a dead end with a known reason still returns an empty list** (found by the T-201 bug hunt, closed by T-204). In the bug-hunt pass
+  (361 ids on v2.6.8) 25 lists were empty: (a) a game or a music album passes as the title before the category
+  filter drops it — "Haunted Hotel 2 - Believe the Lies" (game) for Haunted Hotel S2E3 instead of „Няма сезон
+  2" (the archive has S01), "36 Crazyfists - Lanterns" (album) for Lanterns, a Linux game for Digger (2026);
+  (b) "none carry the show name" (Hunter X Hunter — not in the archive under any spelling, Last Seen, Slime S4);
+  (c) show releases but no season/episode to name (Detective Hole ← the film "Detective.Dee…Hole.2023",
+  Formula 1 S77); (d) the T-105 "all under a longer name" path.
 - **B-019 — underscores in a release name hide its season** (found by the T-201 bug hunt, closed by T-203). 3,9 % of archive titles use "_"
   for spaces (300 of 7 732 in the replay cache; 104 with a season marker: "Slow_Horses_S05E05",
   "The_Wire_-_Season_1_-_1_2002_UHD", "Mayor_of_Kingstown_S04E07"). "_" is a word character, so "Season_2" and
