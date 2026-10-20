@@ -5,6 +5,10 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
+- **B-030 — a film whose Cinemeta year is two off is called missing** (owner: T-214). Found by the T-201 bug hunt
+  pass 3: The Witch: Part 1 - The Subversion — Cinemeta says 2020 (a later release date), the film and its only
+  release are 2018 ("The.Witch.Part.1.The.Subversion.2018.1080p.BluRay"); the year check allows ±1, so the viewer is
+  told „Няма го в архива".
 - **B-025 — a later series of the same name is offered for the earlier one** (no owner yet — needs a check
   first). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
   the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
@@ -16,6 +20,11 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-031 — a release without a year is offered for a film its description dates otherwise** (found by the T-201 bug hunt pass 3, closed by
+  T-213): "Aladdin" (Анимации/Аниме, 39,88 GB; description "Aladdin (TV Series 1994–1995) /
+  Аладин 1994-1995") is offered for Aladdin (2019). A release name without a year passes on the exact name alone;
+  the archive's description line, which often carries the year, is not read.
+
 - **B-029 — a show name's words in another order pass the show check** (found by the T-211 replay, closed by T-212):
   "[RyuKo-JB] Eden of the East 01-11 + Movies" (an anime) is offered for East of Eden (2026) S1E1. When the name's
   words do not stand together, the show check falls back to the old rule (the furthest first word) and accepts

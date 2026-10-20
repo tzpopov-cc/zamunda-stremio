@@ -50,3 +50,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       absolute episode numbers (B-028). Before T-210, which reaches such packs for later seasons.
 - [x] **T-212** A show name's words in another order ("Eden of the East" for East of Eden) do not pass the show
       check (B-029).
+- [x] **T-213** A film release without a year is checked against the years in its archive description: "Aladdin"
+      described as the 1994–1995 TV series is not offered for Aladdin (2019) (B-031).
+- [ ] **T-214** A film whose long name matches a release exactly allows two years of difference: Cinemeta's 2020 for
+      The Witch: Part 1 - The Subversion, released 2018 (B-030).

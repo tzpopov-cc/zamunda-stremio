@@ -2170,7 +2170,7 @@ function looksLikeFilm(t, run) {
     return (cat.startsWith('филми') && !cat.includes('документ')) || cat.startsWith('blu-ray') || outsideRun(t, run);
 }
 
-function matchesMovie(title, name, year, bgName) {
+function matchesMovie(title, name, year, bgName, description) {
     const prefix = torrentTitlePrefix(title);
     const n = normalizeTitle(name);
     const bn = bgName ? normalizeTitle(bgName) : null;
@@ -2189,7 +2189,14 @@ function matchesMovie(title, name, year, bgName) {
         const headMatch = !!head && prefix === head;
         return exact || nameIsPrefix || headMatch;
     }
-    // No year on the torrent (or unknown target year) → require an exact title match.
+    // No year on the torrent (or unknown target year) → require an exact title match. The archive's description line
+    // often has the year the name lacks: "Aladdin" described as "Aladdin (TV Series 1994–1995)" came back for Aladdin
+    // (2019) on the name alone (B-031, v2.6.9). Years there that miss the film's — ±1 around their span, so a trilogy
+    // "(1972 - 1990)" still holds its first film — make it another release.
+    if (exact && year && !years.length && description) {
+        const dy = torrentYears(description);
+        if (dy.length && (year < Math.min(...dy) - 1 || year > Math.max(...dy) + 1)) return false;
+    }
     return exact;
 }
 
@@ -2291,7 +2298,7 @@ async function resolveStreams(type, fullId, config) {
     if (namePageFull) {
         const spaced = t => (t.title || '').replace(/_+/g, ' ');
         const carries = t => isVideoCategory(t) && (type === 'movie'
-            ? ownNames.some(n => matchesMovie(spaced(t), n, movieYear, meta.bulgarian_name))
+            ? ownNames.some(n => matchesMovie(spaced(t), n, movieYear, meta.bulgarian_name, t.description))
             : [...ownNames, ...altNames].some(n => matchesSeriesTitle(spaced(t), n, meta.bulgarian_name)));
         // Past the first page the rows are older: a film's must state its year. "Animals" (Други, 70 MB, no year)
         // passed for Ben Affleck's "Animals" (2026) on the exact-name rule.
@@ -2329,7 +2336,7 @@ async function resolveStreams(type, fullId, config) {
     for (let i = hashless.length - 1; i >= 0; i--) if (!isVideoCategory(hashless[i])) hashless.splice(i, 1);
     // Is a (hashless) row this film / this episode? The same tests the playable rows go through below.
     const isThisTitle = t => type === 'movie'
-        ? ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name))
+        ? ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name, t.description))
         : ownNames.some(n => matchesSeriesTitle(t.title, n, meta.bulgarian_name)) && (!season || matchesEpisode(t.title, season, episode) !== null);
 
     if (allTorrents.length === 0) {
@@ -2478,7 +2485,7 @@ async function resolveStreams(type, fullId, config) {
 
     // Movie matching — drop torrents that aren't THIS film (sequels, remakes, name-substring hits)
     if (type === 'movie') {
-        const matched = allTorrents.filter(t => ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name)));
+        const matched = allTorrents.filter(t => ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name, t.description)));
         if (matched.length > 0) {
             if (matched.length < allTorrents.length) {
                 console.log(`  ${matched.length}/${allTorrents.length} match movie "${meta.name}"${movieYear ? ` (${movieYear})` : ''}`);
