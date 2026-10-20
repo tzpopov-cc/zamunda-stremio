@@ -1330,12 +1330,26 @@ async function resolveFileIdx(infohash, season, episode, title = '', film = null
     return pick.idx;
 }
 
+// The pack's file list is known, its files name other episodes of this season, and none this one: "Stranger Things
+// S05 Vol.2" holds chapters 5–7 and was offered for S5E1, where the player opens whatever it picks (B-023, v2.6.9).
+// A pack whose file names say nothing readable is kept — not knowing is not "lacks".
+function packLacksEpisode(infohash, season, episode, title) {
+    const media = fileLists.get(infohash);
+    if (!media || !media.length) return false;
+    const files = media.map(([idx, name, size]) => ({ idx, name, size }));
+    const seasons = packSeasons(title, season);
+    if (pickEpisodeFile(files, season, episode, seasons)) return false;
+    for (let e = 1; e <= 60; e++) if (e !== episode && pickEpisodeFile(files, season, e, seasons)) return true;
+    return false;
+}
+
 // Resolve what can be resolved within `ms`; fetches still running carry on in the background and
 // land in the store for the next request. Returns true when everything finished in time.
 async function resolvePacksWithin(packs, season, episode, ms, film = null) {
     const work = mapLimit(packs, 5, async (t) => {
         const idx = await resolveFileIdx(t._infohash, season, episode, t.title, film);
         if (idx !== null) t._resolvedFileIdx = idx;
+        else if (season && packLacksEpisode(t._infohash, season, episode, t.title)) t._lacksEpisode = true;
     }).catch(() => {});   // never throws today; a late rejection must not become an unhandled one
     let timer;
     const deadline = new Promise(r => { timer = setTimeout(() => r(false), ms); });
@@ -1355,11 +1369,13 @@ const SIDE_FILE = /(^|[^a-z])(sample|trailer|featurette|extras?|bonus)([^a-z]|$)
 
 // The season a piece of a path names: "S02", "s02 ep07", "1x05", "Season 2", "Сезон 2", "2nd Season",
 // anime "Kuroko's Basketball 3 - 05". Null when it names none — or a range ("S01-S03", a pack root).
+// "Final Season - 07" is episode 7 of the final season, not season 7: a spaced dash after "Season" starts the episode
+// (B-023 replay: My Hero Academia S8's files were read as seasons 1–11).
 function seasonIn(str) {
     if (/s\d{1,2}\s*[-–]\s*s?\d{1,2}(?!\d)|(?:seasons?|сезони)[\s._-]*\d{1,2}\s*[-–]\s*\d/i.test(str)) return null;
     let m = str.match(/(?:^|[^a-z0-9])s(\d{1,2})(?![\d])/i)
         || str.match(/(?<![\d.])(\d{1,2})x(?!26[45])\d{1,3}(?!\d)/i)
-        || str.match(/(?:season|series|сезон)[\s._-]*(\d{1,2})(?!\d)/i)
+        || str.match(/(?:season|series|сезон)(?!\s+[-–]\s)[\s._-]*(\d{1,2})(?!\d)/i)
         || str.match(/(?:^|[^a-z0-9])(\d{1,2})(?:st|nd|rd|th)[\s._-]*season/i)
         || str.match(/(?<=[a-z'\])]\s)([1-9]\d?)(?=\s+-\s+\d)/i);
     return m ? parseInt(m[1]) : null;
@@ -2446,6 +2462,15 @@ async function resolveStreams(type, fullId, config) {
             if (!done) {
                 config._filesPending = true;
                 console.log(`  ⏳ fileIdx: answering after ${FILES_WAIT_MS} ms, the rest resolves in the background`);
+            }
+            const lacking = filtered.filter(t => t._lacksEpisode);
+            if (lacking.length) {
+                filtered = filtered.filter(t => !t._lacksEpisode);
+                console.log(`  ${lacking.length} pack(s) without S${season}E${episode} in their files left out`);
+                if (!filtered.length) {
+                    logEvent('GAP', `${label} — only packs without this episode in their files [${lacking.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
+                    return [episodeNotFoundRow(config, meta.name, season, episode)];
+                }
             }
         }
     } else if (type === 'movie' && (p2pOnly || config.debridmode === 'all')) {

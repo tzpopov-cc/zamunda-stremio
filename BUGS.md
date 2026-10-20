@@ -16,15 +16,15 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   The first two come from the "bare show name" fallback; the third reads "COMPLETE" (a full Blu-ray disc) as a
   complete-series pack.
 
-- **B-023 — a P2P pack whose file list lacks the episode is still offered** (owner: T-207). Found by the T-203
-  replay: "Stranger Things S05 Vol.2 2025" — its file list (known, from itorrents) holds chapters 5–7 — is offered
-  for S5E1 with no file index, so the player opens whatever it picks. TorBox and Real-Debrid already give no link
-  for a pack that lacks the file (v2.6.7); P2P keeps the row.
 - **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
   answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-023 — a P2P pack whose file list lacks the episode is still offered** (found by the T-203 replay, closed by T-207). Found by the T-203
+  replay: "Stranger Things S05 Vol.2 2025" — its file list (known, from itorrents) holds chapters 5–7 — is offered
+  for S5E1 with no file index, so the player opens whatever it picks. TorBox and Real-Debrid already give no link
+  for a pack that lacks the file (v2.6.7); P2P keeps the row.
 - **B-022 — a season pack without a quality word is labelled by its total size** (found by the T-201 bug hunt, closed by T-206). 156 of 4 534
   series/animation rows in the replay cache: "SOUTHPARK Season 01-27" (105,94 GB) shows as 4K and sorts above real
   1080p episodes, "Chicago PD s01" (7,08 GB, XviD by the archive text) as 1080p, "Sleepy Hollow s03" (XviD) as
