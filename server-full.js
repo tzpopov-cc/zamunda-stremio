@@ -999,6 +999,9 @@ function analyse(t) {
     if (t._p) return t._p;
     let p = {};
     try { p = parseMedia(t.title || '') || {}; } catch (e) { p = {}; }
+    // The parser knows "AI.Upscale" and "UPSCALED" but not "Ai-Enhanced" or a RIFE frame interpolation: such a "4K
+    // DV" Matrix was the first row of the film (B-050, v2.7.0). "60fps" alone is left alone — sports are shot so.
+    if (!p.isUpscaled && /(?<![a-z])ai[\s._-]?enhanced|(?<![a-z])rife[\s._-]?v?\d/i.test(t.title || '')) p.isUpscaled = true;
     t._p = p;
     return p;
 }
@@ -3034,6 +3037,7 @@ function buildStream(torrent, url, mode) {
     if (p.bitDepth === '10-bit') videoBits.push('10bit');
     if (p.isRemux) videoBits.push('REMUX');
     else if (p.source) videoBits.push(p.source);
+    if (p.isUpscaled) videoBits.push('Upscale');   // why a "4K" sits under a real 1080p (B-050)
 
     const audioBits = [];
     if ((p.audio || []).length) audioBits.push(p.audio.join(' '));

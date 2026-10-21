@@ -5,10 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-050 — an AI-enhanced, frame-interpolated 4K is the first row** (T-301; owner T-303): "The.Matrix.1999.2160p.DV
-  .HDR10Plus.Ai-Enhanced…RIFE.4.16.lite-60fps-DirtyHippie" tops The Matrix (live, 21.10): the parser marks "AI.Upscale"
-  and "UPSCALED" as upscaled (−400) but not "Ai-Enhanced" or a RIFE interpolation. 7 of the 15 297 cached rows (The
-  Matrix trilogy, Thor, The Fast and the Furious, all DirtyHippie), each the first row of a famous film.
 - **B-051 — the next episode may play from another release; subtitle addons get no file name** (T-301; owner T-304):
   every row's `bingeGroup` is "zamunda-<quality>", so after an episode from a season pack Stremio's auto-play picks
   the first row of the same quality for the next one, often another release (another language, another pack).
@@ -68,6 +64,10 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-050 — an AI-enhanced, frame-interpolated 4K is the first row** (T-301; closed by T-303): "The.Matrix.1999.2160p.DV
+  .HDR10Plus.Ai-Enhanced…RIFE.4.16.lite-60fps-DirtyHippie" tops The Matrix (live, 21.10): the parser marks "AI.Upscale"
+  and "UPSCALED" as upscaled (−400) but not "Ai-Enhanced" or a RIFE interpolation. 5 of the 15 297 cached rows (The
+  Matrix trilogy, Thor, The Fast and the Furious, all DirtyHippie), each the first row of a famous film. Fixed: such a release counts as an upscale (under the real 4K copies) and its row says "Upscale".
 - **B-049 — sizes written two ways** (T-301; closed by T-302): the row shows the archive's string as it is — "25.59 GB"
   next to "4.31GB" (15 297 cached rows: 8 382 "N.N GB", 5 175 "N.N MB", 1 333 "N.NGB", 385 "N.NMB"). Fixed: "number unit" on every row.
 - **B-048 — every Zamunda row says "Zelka"** (T-301, v2.6.9 and before; closed by T-302): the archive writes its source
