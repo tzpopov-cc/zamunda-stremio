@@ -2283,11 +2283,36 @@ function thisFilmTest(rows, ownNames, year, bgName) {
     return t => named(t, year) && !(namesakesOnly && !statesYear(t));
 }
 
-async function resolveStreams(type, fullId, config) {
-    const [imdbId, seasonStr, episodeStr] = fullId.split(':');
-    const season = seasonStr ? parseInt(seasonStr) : null;
-    const episode = episodeStr ? parseInt(episodeStr) : null;
+// Cinemeta's two hosts do not always agree. tt6195094 is "Incident in a Ghostland" on the main host and "Ghostland"
+// on cinemeta-live — the archive knows only "Ghostland"; tt9170318 "Besa: Blood Oath" / "Besa"; the main host dates
+// Ip Man 3 to 2025 (a re-release), cinemeta-live to 2015, and the film test then turns down every "Ip.Man.3.2015"
+// (B-047, B-055, v2.7.0). So a search that found nothing of the title asks the other host once: a name or a year
+// (more than one off) it gives differently is searched as well. Measured over 291 ids (21.10.2026): 19 names differ,
+// the other name finds 2 titles the main one misses (Ghostland, Besa), and a dead end only is retried, so the one the
+// main name alone finds (Toplo) is never lost. Its answer is kept a day; a failed lookup is not kept.
+async function otherHostMetadata(type, imdbId, meta) {
+    const key = `meta2:${type}:${imdbId}`;
+    let other = getCached(key);
+    if (other === null) {
+        try {
+            const res = await axios.get(`${CINEMETA_FALLBACK}/${type}/${imdbId}.json`, { timeout: 2500 });
+            const m = res.data && res.data.meta;
+            other = m && m.name ? { name: m.name, bulgarian_name: m.bulgarian_name, year: m.year, releaseInfo: m.releaseInfo,
+                genres: m.genres || m.genre || [], country: m.country || '', fallback: true } : false;
+        } catch (e) {
+            console.error(`Cinemeta error via ${new URL(CINEMETA_FALLBACK).host} (other name):`, e.message);
+            return null;
+        }
+        setCached(key, other, META_TTL);
+    }
+    if (!other) return null;
+    const y1 = parseYear(meta.year || meta.releaseInfo), y2 = parseYear(other.year || other.releaseInfo);
+    const sameYear = !y1 || !y2 || Math.abs(y1 - y2) <= 1;
+    return normalizeTitle(other.name) === normalizeTitle(meta.name) && sameYear ? null : other;
+}
 
+async function resolveStreams(type, fullId, config) {
+    const imdbId = fullId.split(':')[0];
     const meta = await getMetadata(type, imdbId);
     if (!meta) {
         logEvent('MISS', `${type} ${imdbId} — Cinemeta returned no metadata`);
@@ -2298,10 +2323,39 @@ async function resolveStreams(type, fullId, config) {
         logEvent('MISS', `${type} ${imdbId} — Cinemeta metadata has no name`);
         return [];
     }
+    const before = { ...config };
+    const streams = await resolveWithMeta(type, fullId, config, meta);
+    // A dead end by the name (B-047): only when the main host gave it — a fallback answer already is the other host.
+    if (!streams._nameMiss || meta.fallback) return streams;
+    const other = await otherHostMetadata(type, imdbId, meta);
+    if (!other) return streams;
+    const again = { ...before, _otherName: true };
+    const found = await resolveWithMeta(type, fullId, again, other);
+    // Used when the other name finds the title at all — playable rows, or a truer notice: Besa is in the archive only
+    // with season 2, and „Няма сезон 1 — в архива има S02" beats „Няма го в архива". Still a dead end, or the
+    // archive gone mid-way: the first answer stands.
+    if (found._nameMiss || found.some(s => s.url === NOTICE_DOWN_URL)) return streams;
+    // The answer used carries its own flags (caching, files pending), not the first search's.
+    for (const k of Object.keys(config)) if (k.startsWith('_') && !(k in again)) delete config[k];
+    Object.assign(config, again);
+    return found;
+}
+
+// A dead end that a different name of the title might not be (B-047): nothing found, or nothing that is this
+// title. Marked on the array, which JSON does not carry, like `_noCache`.
+function nameMiss(rows) {
+    rows._nameMiss = true;
+    return rows;
+}
+
+async function resolveWithMeta(type, fullId, config, meta) {
+    const [imdbId, seasonStr, episodeStr] = fullId.split(':');
+    const season = seasonStr ? parseInt(seasonStr) : null;
+    const episode = episodeStr ? parseInt(episodeStr) : null;
 
     const label = `${type} "${meta.name}"${season ? ` S${season}E${episode}` : ''}`;
-    console.log(`\n🔍 ${label} [${config.debrid}|${config.content}]`);
-    logEvent('SEARCH', `${label} [${config.debrid}|${config.content}]`);
+    console.log(`\n🔍 ${label} [${config.debrid}|${config.content}]${config._otherName ? ' — Cinemeta\'s other name' : ''}`);
+    if (!config._otherName) logEvent('SEARCH', `${label} [${config.debrid}|${config.content}]`);
 
     // Build search queries — for series, search with season/episode patterns too
     // because zamunda API returns max 20 results per query
@@ -2471,7 +2525,7 @@ async function resolveStreams(type, fullId, config) {
             return [noLinkRow(config, meta.name, titleYear)];
         }
         logEvent('GAP', `${label} — 0 results from zamunda${nonVideo ? ` (${nonVideo} not films or series)` : ''}${hashless.length ? ` (${hashless.length} without a link, none this title)` : ''}`);
-        return [notInArchiveRow(config, meta.name, titleYear)];
+        return nameMiss([notInArchiveRow(config, meta.name, titleYear)]);
     }
 
     // Episode matching for series
@@ -2501,7 +2555,8 @@ async function resolveStreams(type, fullId, config) {
             logEvent('GAP', `${label} — ${beforeCount} results, none carry the show name${underAltName ? ' (only under another name)' : ''} [${allTorrents.slice(0, 3).map(t => t.title).join(' | ')}]`);
             const noLink = noLinkEpisode();
             if (noLink) return noLink;
-            return [underAltName ? episodeNotFoundRow(config, meta.name, season, episode) : notInArchiveRow(config, meta.name, parseYear(meta.year || meta.releaseInfo))];
+            if (underAltName) return [episodeNotFoundRow(config, meta.name, season, episode)];
+            return nameMiss([notInArchiveRow(config, meta.name, parseYear(meta.year || meta.releaseInfo))]);
         }
         if (onShow.length < beforeCount) {
             console.log(`  ${onShow.length}/${beforeCount} carry the show name`);
@@ -2627,13 +2682,13 @@ async function resolveStreams(type, fullId, config) {
             logEvent('GAP', `${label} — ${allTorrents.length} results, none are this film [${allTorrents.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
             if (hashless.some(isThisTitle)) return [noLinkRow(config, meta.name, movieYear)];
             const bgLang = (config.lang || 'bg') === 'bg';
-            return [{
+            return nameMiss([{
                 name: bgLang ? 'ℹ️ Няма го в архива\nZamunda BG' : 'ℹ️ Not in the archive\nZamunda BG',
                 title: bgLang
                     ? `„${meta.name}“${movieYear ? ` (${movieYear})` : ''} го няма в архива.\nИма само заглавия с подобно име.`
                     : `"${meta.name}"${movieYear ? ` (${movieYear})` : ''} is not in the archive.\nThe archive only has titles with a similar name.`,
                 url: NOTICE_INFO_URL,
-            }];
+            }]);
         }
     }
 

@@ -393,3 +393,7 @@ series tt13622982:3:3   # Star Wars: Visions "Season_3_-_3"
 series tt0306414:3:3   # The Wire "Season_3_-_3" (old: S3E3 only, no file)
 series tt2805096:1:2   # Chicago_PD_S01E02
 series tt5875444:5:5   # Slow_Horses_S05E05
+movie tt0240772
+series tt0413573:22:7
+movie tt2888046
+series tt9170318:2:3

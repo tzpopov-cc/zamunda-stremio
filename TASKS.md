@@ -82,5 +82,5 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       TorBox timing, readable grey, a line that the archive gets no new torrents (B-053).
 - [x] **T-307** Manifest description per mode in full words, a real background picture; README true and in
       Bulgarian (B-054).
-- [ ] **T-308** A dead end asks Cinemeta's other host and searches again when its name or year differs (B-047,
+- [x] **T-308** A dead end asks Cinemeta's other host and searches again when its name or year differs (B-047,
       B-055).

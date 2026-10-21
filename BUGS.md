@@ -5,21 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-055 — Cinemeta's main host gives a wrong year** (found with B-047, T-301; owner T-308): tt2888046 Ip Man 3 is
-  2025 on v3-cinemeta (released 2025-10-05, a re-release) and 2015 on cinemeta-live; the archive has three
-  "Ip.Man.3.2015…" rows and the film test (±1 year) rejects them all → „Няма го в архива". Of 291 measured ids the
-  year differs on 10, 8 of them by one year (tolerated), The Witch by two (T-214), Ip Man 3 by ten.
-
-- **B-047 — Cinemeta's main host names a film differently from its releases** (no owner yet — found by the T-221
-  replay, v2.6.8 too): tt6195094 is "Incident in a Ghostland" on v3-cinemeta and "Ghostland" on cinemeta-live
-  (21.10.2026); the archive has "Ghostland.2018.720p.BluRay.x264.AC3-HUD" and "Ghostland.2018.BRRip.XViD.AC3-HUD",
-  and reads every word as a substring, so the main name finds 0 rows → „Няма го в архива". The replay pair got
-  different names for the same id (one server's main host timed out), which is the only difference of the T-221
-  fixes over the 387 ids. Measured (T-301, 21.10.2026, 291 ids of the replay set and the live log, both hosts answered
-  all): 19 names differ, 7 only in case, punctuation or an accent; the archive finds the title under the main name
-  only for 1 (Toplo), under the other only for 2 (Ghostland, Besa: Blood Oath → "Besa"), under both for 10, under
-  neither for 6. Searching the other name as well, on a dead end only, gains the 2 and loses none. Owner T-308.
-
 - **B-037 — an anime whose archive name joins its hyphenated words is called missing** (deferred — the fix alone
   offers a wrong file). Found by the T-201 bug hunt pass 4: Mushi-Shi S1E11 → „Няма го в архива"; the archive has
   "[YSAnime] Mushishi [BDRip H.264 1920x1080 AAC]" (14,17 GB) and "[RyuKo]Mushishi" (8,10 GB). Kitsu's romaji name
@@ -40,6 +25,21 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-047 — Cinemeta's main host names a film differently from its releases** (no owner yet — found by the T-221
+  replay, v2.6.8 too): tt6195094 is "Incident in a Ghostland" on v3-cinemeta and "Ghostland" on cinemeta-live
+  (21.10.2026); the archive has "Ghostland.2018.720p.BluRay.x264.AC3-HUD" and "Ghostland.2018.BRRip.XViD.AC3-HUD",
+  and reads every word as a substring, so the main name finds 0 rows → „Няма го в архива". The replay pair got
+  different names for the same id (one server's main host timed out), which is the only difference of the T-221
+  fixes over the 387 ids. Measured (T-301, 21.10.2026, 291 ids of the replay set and the live log, both hosts answered
+  all): 19 names differ, 7 only in case, punctuation or an accent; the archive finds the title under the main name
+  only for 1 (Toplo), under the other only for 2 (Ghostland, Besa: Blood Oath → "Besa"), under both for 10, under
+  neither for 6. Searching the other name as well, on a dead end only, gains the 2 and loses none. Closed by T-308.
+ Fixed by T-308: on a dead end the other host's name is searched as well — Ghostland and Besa found, Toplo kept.
+- **B-055 — Cinemeta's main host gives a wrong year** (found with B-047, T-301; closed by T-308): tt2888046 Ip Man 3 is
+  2025 on v3-cinemeta (released 2025-10-05, a re-release) and 2015 on cinemeta-live; the archive has three
+  "Ip.Man.3.2015…" rows and the film test (±1 year) rejects them all → „Няма го в архива". Of 291 measured ids the
+  year differs on 10, 8 of them by one year (tolerated), The Witch by two (T-214), Ip Man 3 by ten.
+ Fixed by T-308: on a dead end the other host's year is searched as well — Ip Man 3 gets its 12 releases.
 - **B-054 — manifest and README say less or older things** (T-301; closed by T-307): the manifest says „от Zamunda
   архива (RD режим)" and uses the 512 px icon as its background picture; the README says "450K+" (448 023), lists
   the Upstash variables (gone), its self-host steps skip `config.html` (the server stops at start) and its Bulgarian
