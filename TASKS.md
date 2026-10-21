@@ -61,3 +61,5 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       Season N" before the season or episode is called missing (B-034).
 - [x] **T-219** A season or episode the archive has only without an infohash gets „Без връзка в архива", not „Няма
       сезон N" (B-036).
+- [x] **T-220** A film release without a year is not taken for the film when releases of the same name state years
+      and none is the film's (B-038).

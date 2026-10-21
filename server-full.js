@@ -2380,10 +2380,20 @@ async function resolveStreams(type, fullId, config) {
         console.log(`  ${nonVideo} not films or series (games, music…) left out`);
     }
     for (let i = hashless.length - 1; i >= 0; i--) if (!isVideoCategory(hashless[i])) hashless.splice(i, 1);
+    // A film release that states no year, in its name or its description, is this film on the name alone. When releases
+    // of the same name state years and none is this film's, the yearless one is one of those namesakes: "Don't.Move.
+    // DVDRip.XviD" (the 2004 film by its age) passed for Don't Move (2026), a bare "Highlander" for the 2013-dated
+    // remake (B-038, v2.6.9).
+    const statesYear = t => torrentYears(t.title).length > 0 || torrentYears(t.description || '').length > 0;
+    const dated = type === 'movie' && movieYear ? [...allTorrents, ...hashless].filter(statesYear) : [];
+    const namesakesOnly = dated.some(t => ownNames.some(n => matchesMovie(t.title, n, null, meta.bulgarian_name, t.description)))
+        && !dated.some(t => ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name, t.description)));
+    const isThisFilm = t => ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name, t.description))
+        && !(namesakesOnly && !statesYear(t));
     // Is a (hashless) row this film / this episode? The same tests the playable rows go through below. A show's row
     // must carry the name with nothing before it: "Melissa.and.Joey.S02" is not Joey S2 (B-036, v2.6.9).
     const isThisTitle = t => type === 'movie'
-        ? ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name, t.description))
+        ? isThisFilm(t)
         : ownNames.some(n => matchesSeriesTitle(t.title, n, meta.bulgarian_name) && !namePrefix(t.title, headTokens(n)).length)
             && (!season || matchesEpisode(t.title, season, episode) !== null);
     // The episode is in the archive, but only without an infohash ("The Simpsons season 1-18 complete", "Nip Tuck -
@@ -2546,7 +2556,7 @@ async function resolveStreams(type, fullId, config) {
 
     // Movie matching — drop torrents that aren't THIS film (sequels, remakes, name-substring hits)
     if (type === 'movie') {
-        const matched = allTorrents.filter(t => ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name, t.description)));
+        const matched = allTorrents.filter(isThisFilm);
         if (matched.length > 0) {
             if (matched.length < allTorrents.length) {
                 console.log(`  ${matched.length}/${allTorrents.length} match movie "${meta.name}"${movieYear ? ` (${movieYear})` : ''}`);

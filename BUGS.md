@@ -23,13 +23,21 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-038 — a release without a year is taken for a recent film of the same name** (found by the T-201 bug hunt
+  pass 5, live searches 20.10 ~23:15 – 23:53 UTC, closed by T-220): Don't Move (2026, a spider horror film) → „Без
+  връзка в архива", from "Don't.Move.DVDRip.XviD.6CH.AC3-FaN" (no year, no description, no link) — by its age the
+  2004 film, whose releases state 2004 next to the 2024 Netflix film's. With a link it would have been offered as the
+  2026 film. Same shape in the T-219 replay: "East Of Eden - E01-04" (the 2008 drama) for the 2026 series. Over the
+  200 films of the replay and both passes × every cached row: 2 films take a yearless row while every namesake states
+  another year — Don't Move (2026) and Highlander (2013-dated; a bare "Highlander" with a link, the 1986/1991/1994
+  namesakes stating theirs).
 - **B-036 — a season the archive has only without a link is called missing** (found by the T-201 bug hunt pass 4,
   closed by T-219): The Simpsons S9 — the only season-9 releases are "The Simpsons season 1-18 complete" and "Simpsons
   Seasons 00-19", both without an infohash; the viewer is told „Няма сезон 9" (the season is not in the archive)
   instead of „Без връзка в архива" (B-004's row). The same for Grey's Anatomy S04 ("Greys.Anatomy.S04.DVDRip", no
   infohash) until B-034 surfaced the playable pack.
 - **B-034 — an older season of a long show is called missing when its only pack is a multi-season one** (found by the T-201
-  bug hunt pass 4, live searches 20.10 21:01 – 21.10 ~02:00 UTC, closed by T-218): the season is looked
+  bug hunt pass 4, live searches 20.10 21:01 – ~23:15 UTC, closed by T-218): the season is looked
   for as "<name>" (the newest 50 rows) and "<name> S04"; a pack named "S01-16" or "Season 01-15" is in neither.
   Grey's Anatomy S4E1 → „Няма сезон 4" while "Greys.Anatomy.S01-16.WEBRip.x264-ION10" (147,46 GB) answers "Grey's
   Anatomy Season 4"; NCIS S2E3 → „Няма сезон 2" while "NCIS - Season 01-15" (110,48 GB) answers "NCIS Season 2";
