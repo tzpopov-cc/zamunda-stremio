@@ -472,6 +472,7 @@
             font-size: 13px; color: var(--text-dim); line-height: 1.7;
         }
         .changelog-body li { margin-bottom: 4px; margin-left: 16px; }
+        .changelog-body li .changelog-tag { margin-right: 6px; vertical-align: 1px; }
 
         /* ── Footer ── */
         .footer {
@@ -535,7 +536,7 @@
         <p class="subtitle" data-bg="Добавка за Stremio за филми и сериали" data-en="Stremio addon for movies & series"></p>
         <p class="sources" style="font-size:11px; color:var(--text-muted); margin-top:6px; letter-spacing:1px;" data-bg="Zamunda · ArenaBG · Zelka" data-en="Zamunda · ArenaBG · Zelka"></p>
         <p class="sources" style="font-size:11px; color:var(--text-muted); margin-top:2px;" data-bg="Архивът не получава нови торенти, затова новите заглавия липсват." data-en="The archive gets no new torrents, so new titles are missing."></p>
-        <div class="version-badge">v2.6.9</div>
+        <div class="version-badge">v2.7.0</div>
         <div class="stats-bar header-stats-bar" id="headerStatsBar">
             <div class="stat">
                 <div class="stat-value" id="statUsersHeader">—</div>
@@ -745,6 +746,25 @@
     <!-- TAB: Changelog                      -->
     <!-- ═══════════════════════════════════ -->
     <div class="tab-content" id="tab-changelog">
+
+        <div class="changelog-entry">
+            <div class="changelog-header">
+                <span class="changelog-version">v2.7.0</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
+                <span class="changelog-date">2026-10-21</span>
+            </div>
+            <div class="changelog-body">
+                <ul>
+                    <li><span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span> <span data-bg="Следващият епизод тръгва сам от същия пакет или от същата група, затова гледането подред не прекъсва. Добавките за субтитри получават името и размера на файла и намират по-точни субтитри." data-en="The next episode starts on its own from the same pack or the same release group, so watching in a row does not stop. Subtitle addons get the file's name and size and find better-matching subtitles."></span></li>
+                    <li><span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span> <span data-bg="Когато Stremio дава на заглавието друго име или грешна година, добавката проверява втори източник и търси пак. „Ip Man 3“, „Ghostland“ и „Besa“ вече се намират." data-en="When Stremio gives a title another name or a wrong year, the addon checks a second source and searches again. “Ip Man 3”, “Ghostland” and “Besa” are now found."></span></li>
+                    <li><span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span> <span data-bg="Сериалите със същото име от други години вече не се смесват. „MacGyver“ (1985) е без епизодите на новия от 2016 г., анимационният „Аватар“ е без игралния от 2024 г., анимето „One Piece“ е без игралната версия, а „Death Note“ показва пакетите на анимето вместо игралния сериал." data-en="Shows of the same name from other years are no longer mixed. “MacGyver” (1985) comes without the episodes of the 2016 series, the animated “Avatar” without the 2024 live-action one, the “One Piece” anime without the live-action version, and “Death Note” shows the anime packs instead of the live-action drama."></span></li>
+                    <li><span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span> <span data-bg="Изкуствено „подобрените“ копия (AI-enhanced, 60 кадъра в секунда) вече не излизат първи и носят надпис „Upscale“. „Матрицата“, „Тор“ и „Бързи и яростни“ започват с истинските копия." data-en="Artificially “enhanced” copies (AI-enhanced, 60 frames per second) no longer come first and are marked “Upscale”. “The Matrix”, “Thor” and “The Fast and the Furious” start with the real copies."></span></li>
+                    <li><span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span> <span data-bg="Всеки ред казва верния сайт. Торентите от Zamunda пишат „Zamunda“ (досега повечето пишеха „Zelka“), ArenaBG е изписан правилно, а размерът е изписан навсякъде еднакво." data-en="Every row names the right site. Torrents from Zamunda say “Zamunda” (most said “Zelka” until now), ArenaBG is spelled right, and sizes are written the same way everywhere."></span></li>
+                    <li><span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span> <span data-bg="Съобщенията в списъка казват с прости думи какво става: „Няма епизод 5“, „Няма това качество“, „Архивът не отговаря“. За сезон, излъчен през 2026 г., казват и защо липсва: архивът не получава нови торенти." data-en="The messages in the list say plainly what happened: “No episode 5”, “No such quality”, “Archive not responding”. For a season aired in 2026 they also say why it is missing: the archive gets no new torrents."></span></li>
+                    <li><span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span> <span data-bg="Тази страница е по-четлива и изцяло на български, с ясни думи за ключа на Real-Debrid и TorBox. Добавката в Stremio има описание на трите сайта и своя фонова картина." data-en="This page is easier to read, its Bulgarian version has no English words left, and it speaks plainly about the Real-Debrid and TorBox key. The addon in Stremio has a description of the three sites and its own background picture."></span></li>
+                </ul>
+            </div>
+        </div>
 
         <div class="changelog-entry">
             <div class="changelog-header">

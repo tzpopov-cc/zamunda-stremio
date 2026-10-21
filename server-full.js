@@ -323,7 +323,7 @@ function buildManifest(config) {
     // stretched the 512 px icon there (B-054, v2.7.0).
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.6.9',
+        version: '2.7.0',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от архива на Zamunda, ArenaBG и Zelka (режим ${mode})`
@@ -3692,7 +3692,7 @@ ${history.map(h => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.6.9</span>
+<span style="font-size:12px;color:var(--dim)">v2.7.0</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -3734,7 +3734,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.9', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.7.0', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Last: an error Express raises itself (a path it cannot decode, "/%zz/manifest.json") or a route throws gets a plain
 // answer. Express's own page shows the stack trace with the server's file paths (B-033, v2.6.9).
@@ -3760,6 +3760,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.6.9 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.7.0 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });

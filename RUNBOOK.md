@@ -98,7 +98,7 @@ position in the WHOLE torrent (subtitles and .nfo included), which is what Strem
 server expects as `fileIdx`. It is a cache, not data to protect: delete it and it rebuilds on demand.
 
 Rollback: the server keeps `server.js.bak-<version>-predeploy` + `config.html.bak-<version>-predeploy`
-for every deploy (2.6.2 – 2.6.8 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
+for every deploy (2.6.2 – 2.6.9 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
 Since 2.6.7 a deploy also tags the old image (`docker tag zamunda-stremio-zamunda-stremio:latest …:<old version>`)
 and copies `data/` to `data.bak-<old version>-predeploy` while the container is STOPPED (build first, then
 `stop` → `cp -a` → `up -d`: about 3 s down, and the copy is consistent).
@@ -473,6 +473,40 @@ so a low number is a floor, not a ceiling.
 **Closed 2026-09-20:** the hop used to be plain HTTP with the API key in cleartext. It now runs over
 WireGuard. The fallback path is still plaintext, but it is only used when the tunnel is down, and it
 remains pinned to one source IP and key-protected.
+
+### Polish: rows, hints, names and notices (v2.7.0)
+
+Stage 3 of the bug loop (owner: „lets polish the addon and make it proper"; T-301 – T-311):
+- **The row.** Source "z" reads Zamunda (v2.6.9 called 1 221 of 1 585 replay rows "Zelka"), "arenabg" ArenaBG; a size
+  is always "number unit" (`sizeLabel`). An AI-enhanced or RIFE-interpolated release ranks as an upscale and says
+  "Upscale" (the 4K Ai-Enhanced Matrix no longer comes first).
+- **Hints.** `bingeGroup`: a pack `zamunda|<infohash>`, a single episode `zamunda|<quality>|<bg or empty>|<release group>`, a
+  film `zamunda-<quality>` — the next episode stays on the same pack or group. `filename` + `videoSize` when the file is
+  known: the debrid file, or a P2P file index (never on a P2P row without one). Every request works on its own copies
+  of the rows: the search cache keeps the archive's row objects an hour, and v2.6.9 let one request's file, file index
+  and seeders show in another's answer (B-057).
+- **Cinemeta's other host** (`otherHostMetadata`): on a dead end (nothing found, nothing carrying the show's name, no
+  release that is this film), cinemeta-live is asked once (2,5 s, kept a day, a failure not kept). Its name is
+  searched when it is the same name in another year (Ip Man 3: 2025 / 2015) or one name holds the other's words
+  (Ghostland / Incident in a Ghostland, Besa / Besa: Blood Oath); its answer is used unless it is a dead end too or the
+  archive went down. The log label ends "— Cinemeta's other name"; no second SEARCH line, and the first dead end's GAP
+  line is logged only if that answer is the one shown.
+- **Same-name shows** (`anotherShowsYears`): a release whose own years (before its season mark, never the show's own
+  name — "1923") fit neither the asked season's air years from Cinemeta (`seasonYears`, ±1) nor the show's first year
+  is another show: MacGyver 2016 for 1985, Avatar 2024 for 2005, One Piece 2023 for the anime. No year, no air dates:
+  kept. Log: `N of another show's years left out (season S aired Y–Y)`.
+- **Notices.** One name per kind (ℹ️ facts, ⚠️ the archive not answering): „Няма епизод N", „Няма сезон N",
+  „Няма това качество", „Над максималния размер", „⚠️ Архивът не отговаря". A season first aired in 2026 or later adds
+  that the archive gets no new torrents (`seasonIsNew`). The dead end reads a season only from a real mark — the
+  release group "HS0" was "S00" (B-056).
+- **Manifest and page.** The description names the three sites and the mode; the background is `background.jpg`
+  from the GitHub repo (push before deploying a change to it). The config page: Bulgarian throughout, one key wording,
+  readable grey, the frozen-archive line, the outage banner says „Архивът е недостъпен"; the changelog marks each
+  v2.7.0 line ПОДОБРЕНИЕ.
+
+Tested: replay 391 ids vs v2.6.9 — 12 rows lost, every one another show's (MacGyver 2016, Avatar 2024, One Piece 2023,
+Death Note 2015, Undercover 2016, 2 Fast 2 Furious for Furious 2026); 17 gained (Ip Man 3 ×12, Ghostland ×2, Death
+Note anime packs ×2, Besa S2E3); 0 errors. The fresh-context review found 4 more (B-057…B-060), fixed.
 
 ## Deploying a new version
 
