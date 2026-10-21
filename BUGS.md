@@ -5,15 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-053 — the config page: a broken line, a doubled box, English words, faint text** (T-301 text audit; owner
-  T-306): changelog `data-bg="Секция „Благодарности" за хората…"` — the straight quote ends the attribute, so the
-  line shows „Секция „Благодарности" only; the numbers box twice (top and above the support box); „Streaming метод",
-  „Зависи от seeders", „Stremio addon", „като backup" (and 🌐 where the rows show 🔗), „Копирай URL", „Real-Debrid API
-  Token" without Bulgarian, alerts „Въведи Real-Debrid token" / „Token-ът изглежда невалиден"; TorBox „~2-3 сек."
-  (measured 0,4–0,8 s on live, 19 lists); the muted grey (#444 on black, about 2:1) on the „Промени" tab, the hints
-  and the disclaimer; the page never says the archive gets no new torrents; the outage banner says „настройвате"
-  (the page says „ти" everywhere else); „Лимит на размер" / „Без лимит" where the rows say „ограничение"; changelog
-  words „Fallback", „Fix", „timeout", „miss-ове", „Анимe" (Latin e), internal notes (logs, Upstash) and mixed badges.
 - **B-054 — manifest and README say less or older things** (T-301; owner T-307): the manifest says „от Zamunda
   архива (RD режим)" and uses the 512 px icon as its background picture; the README says "450K+" (448 023), lists
   the Upstash variables (gone), its self-host steps skip `config.html` (the server stops at start) and its Bulgarian
@@ -53,6 +44,15 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-053 — the config page: a broken line, a doubled box, English words, faint text** (T-301 text audit; closed
+  by T-306): changelog `data-bg="Секция „Благодарности" за хората…"` — the straight quote ends the attribute, so the
+  line shows „Секция „Благодарности" only; the numbers box twice (top and above the support box); „Streaming метод",
+  „Зависи от seeders", „Stremio addon", „като backup" (and 🌐 where the rows show 🔗), „Копирай URL", „Real-Debrid API
+  Token" without Bulgarian, alerts „Въведи Real-Debrid token" / „Token-ът изглежда невалиден"; TorBox „~2-3 сек."
+  (measured 0,4–0,8 s on live, 19 lists); the muted grey (#444 on black, about 2:1) on the „Промени" tab, the hints
+  and the disclaimer; the page never says the archive gets no new torrents; the outage banner says „настройвате"
+  (the page says „ти" everywhere else); „Лимит на размер" / „Без лимит" where the rows say „ограничение"; changelog
+  words „Fallback", „Fix", „timeout", „miss-ове", „Анимe" (Latin e), internal notes (logs, Upstash) and mixed badges. Fixed in T-306.
 - **B-052 — notice rows: raw values, wrong plural, three words for the key** (T-301 text audit; closed by T-305):
   „⚠️ Няма 720p,sd" (the raw setting); „Показваме всички 1 резултата" / „Показваме 1 P2P резултата" (`server-full.js`
   BG-audio, quality and RD hints); the RD row says „ключ", the TorBox row „токен", both „Преконфигурирай…"; the

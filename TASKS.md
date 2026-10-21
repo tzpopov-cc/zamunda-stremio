@@ -78,7 +78,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       tells subtitle addons its file name and size (B-051).
 - [x] **T-305** Notice rows: plain words for the setting, right plurals, one word for the key, a name that says what
       happened, one emoji per kind (B-052).
-- [ ] **T-306** The config page: the broken changelog line, one numbers box, Bulgarian words, the key wording,
+- [x] **T-306** The config page: the broken changelog line, one numbers box, Bulgarian words, the key wording,
       TorBox timing, readable grey, a line that the archive gets no new torrents (B-053).
 - [ ] **T-307** Manifest description per mode in full words, a real background picture; README true and in
       Bulgarian (B-054).

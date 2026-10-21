@@ -43,8 +43,8 @@
             --border: rgba(255, 255, 255, 0.08);
             --border-active: rgba(245, 208, 32, 0.4);
             --text: #e0e0e0;
-            --text-dim: #777;
-            --text-muted: #444;
+            --text-dim: #8c8c8c;
+            --text-muted: #777;          /* was #444: about 2:1 on the black, unreadable (B-053) */
             --font-display: 'Chakra Petch', sans-serif;
             --font-body: 'DM Sans', sans-serif;
         }
@@ -524,7 +524,7 @@
     <!-- Shown only while /stats reports the torrent source as unreachable -->
     <div class="source-alert" id="sourceAlert">
         <div class="source-alert-title" data-bg="Източникът на торенти е недостъпен" data-en="The torrent source is unreachable"></div>
-        <div class="source-alert-body" data-bg="Търсенията не връщат резултати, защото сайтовете-източници не отговарят — това не е повреда в добавката и няма какво да настройвате. Добавката ще проработи веднага щом източникът се върне." data-en="Searches return no results because the source sites are not responding — this is not an addon fault and there is nothing for you to reconfigure. The addon will work again as soon as the source returns."></div>
+        <div class="source-alert-body" data-bg="Търсенията не връщат резултати, защото архивът с торенти (zamunda.life) не отговаря — това не е повреда в добавката и няма какво да настройваш. Добавката ще проработи веднага щом архивът се върне." data-en="Searches return no results because the torrent archive (zamunda.life) is not responding — this is not an addon fault and there is nothing for you to reconfigure. The addon will work again as soon as the archive returns."></div>
     </div>
 
     <!-- Header -->
@@ -532,8 +532,9 @@
         <img src="https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png"
              alt="Zamunda BG" class="header-icon">
         <h1>Zamunda BG</h1>
-        <p class="subtitle" data-bg="Stremio addon за филми и сериали" data-en="Stremio addon for movies & series"></p>
+        <p class="subtitle" data-bg="Добавка за Stremio за филми и сериали" data-en="Stremio addon for movies & series"></p>
         <p class="sources" style="font-size:11px; color:var(--text-muted); margin-top:6px; letter-spacing:1px;" data-bg="Zamunda · ArenaBG · Zelka" data-en="Zamunda · ArenaBG · Zelka"></p>
+        <p class="sources" style="font-size:11px; color:var(--text-muted); margin-top:2px;" data-bg="Архивът не получава нови торенти, затова новите заглавия липсват." data-en="The archive gets no new torrents, so new titles are missing."></p>
         <div class="version-badge">v2.6.9</div>
         <div class="stats-bar header-stats-bar" id="headerStatsBar">
             <div class="stat">
@@ -565,7 +566,7 @@
         <!-- DEBRID -->
         <div class="section">
             <div class="section-title">
-<span data-bg="Streaming метод" data-en="Streaming method"></span>
+<span data-bg="Начин на гледане" data-en="Streaming method"></span>
             </div>
             <div class="radio-cards">
                 <label class="radio-card selected" id="card-p2p" onclick="selectDebrid('none')">
@@ -573,8 +574,8 @@
                     <div class="card-title">
                         P2P <span class="badge badge-free" data-bg="Безплатно" data-en="Free"></span>
                     </div>
-                    <div class="card-desc" data-bg="Торент стрийминг. Зависи от seeders."
-                         data-en="Torrent streaming. Depends on seeders."></div>
+                    <div class="card-desc" data-bg="Направо от торента. Зависи от броя раздаващи."
+                         data-en="Straight from the torrent. Depends on seeders."></div>
                 </label>
                 <label class="radio-card" id="card-rd" onclick="selectDebrid('realdebrid')">
                     <input type="radio" name="debrid" value="realdebrid">
@@ -589,13 +590,13 @@
                     <div class="card-title">
                         TorBox <span class="badge badge-premium" data-bg="Премиум" data-en="Premium"></span>
                     </div>
-                    <div class="card-desc" data-bg="Без буфериране. Бърз кеш ~2-3 сек."
-                         data-en="No buffering. Fast cache ~2-3 sec."></div>
+                    <div class="card-desc" data-bg="Без буфериране. Проверка ~1 сек."
+                         data-en="No buffering. Check takes ~1 sec."></div>
                 </label>
             </div>
             <!-- RD Token -->
             <div class="token-row" id="rdTokenRow">
-                <label>Real-Debrid API Token</label>
+                <label data-bg="API ключ за Real-Debrid" data-en="Real-Debrid API token"></label>
                 <input type="password" id="rdToken" placeholder="ABCDEFGHIJKLMNOP1234567890..." autocomplete="off">
                 <div class="token-help">
                     <span data-bg="Вземи от" data-en="Get from"></span>
@@ -604,7 +605,7 @@
             </div>
             <!-- TorBox Token -->
             <div class="token-row" id="tbTokenRow">
-                <label>TorBox API Token</label>
+                <label data-bg="API ключ за TorBox" data-en="TorBox API token"></label>
                 <input type="password" id="tbToken" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" autocomplete="off">
                 <div class="token-help">
                     <span data-bg="Вземи от" data-en="Get from"></span>
@@ -623,8 +624,8 @@
                             <span data-bg="Само кеширани" data-en="Cached only"></span>
                         </div>
                     </div>
-                    <div class="hint" data-bg="⚡ Кеширани се показват първи (моментално). 🌐 P2P се добавят отдолу като backup."
-                         data-en="⚡ Cached streams appear first (instant). 🌐 P2P added below as backup."></div>
+                    <div class="hint" data-bg="⚡ Кешираните са най-отгоре и тръгват веднага. 🔗 P2P връзките са под тях, като резерва."
+                         data-en="⚡ Cached streams come first and start at once. 🔗 P2P links follow below as a backup."></div>
                 </div>
             </div>
         </div>
@@ -667,10 +668,10 @@
         <!-- SIZE LIMIT -->
         <div class="section">
             <div class="section-title">
-<span data-bg="Лимит на размер" data-en="Size limit"></span>
+<span data-bg="Максимален размер" data-en="Maximum size"></span>
             </div>
             <input type="text" class="size-input" id="sizeLimit"
-                   data-bg-placeholder="Без лимит" data-en-placeholder="No limit" placeholder="Без лимит">
+                   data-bg-placeholder="Без ограничение" data-en-placeholder="No limit" placeholder="Без ограничение">
             <div class="hint" data-bg="Примери: 5GB, 10GB. Различен за филми/сериали: 10GB,2GB"
                  data-en="Examples: 5GB, 10GB. Different for movies/series: 10GB,2GB"></div>
         </div>
@@ -682,7 +683,7 @@
                     <span data-bg="Инсталирай в Stremio" data-en="Install in Stremio"></span>
                 </button>
                 <button class="btn btn-secondary" onclick="copyUrl()">
-                    <span data-bg="Копирай URL" data-en="Copy URL"></span>
+                    <span data-bg="Копирай връзката" data-en="Copy link"></span>
                 </button>
             </div>
             <div id="manifestUrl"></div>
@@ -690,20 +691,6 @@
 
         <!-- COMMUNITY / STATS -->
         <div class="community-section">
-            <div class="stats-bar" id="statsBar">
-                <div class="stat">
-                    <div class="stat-value" id="statUsers">—</div>
-                    <div class="stat-label" data-bg="потребители" data-en="users"></div>
-                </div>
-                <div class="stat">
-                    <div class="stat-value" id="statStreams">—</div>
-                    <div class="stat-label" data-bg="търсения" data-en="searches"></div>
-                </div>
-                <div class="stat">
-                    <div class="stat-value" id="statTorrents">—</div>
-                    <div class="stat-label" data-bg="торенти" data-en="torrents"></div>
-                </div>
-            </div>
 
             <div class="support-card">
                 <div class="support-text">
@@ -734,7 +721,7 @@
             </div>
 
             <div class="contributors">
-                <h4 data-bg="Благодарности" data-en="Contributors"></h4>
+                <h4 data-bg="Благодарности" data-en="Thank you"></h4>
                 <div class="contributors-list">
                     <span class="contributor top">Georgi Damyanov</span>
                     <span class="contributor">Plamen Atanasov</span>
@@ -872,7 +859,7 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.6.0</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-09-21</span>
             </div>
             <div class="changelog-body">
@@ -885,7 +872,7 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.5.3</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-09-21</span>
             </div>
             <div class="changelog-body">
@@ -925,7 +912,7 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.5.0</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-09-20</span>
             </div>
             <div class="changelog-body">
@@ -938,7 +925,7 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.4.0</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-09-20</span>
             </div>
             <div class="changelog-body">
@@ -951,7 +938,7 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.3.0</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-09-18</span>
             </div>
             <div class="changelog-body">
@@ -965,7 +952,7 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.2.0</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-09-18</span>
             </div>
             <div class="changelog-body">
@@ -997,7 +984,7 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.1.5</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-08-28</span>
             </div>
             <div class="changelog-body">
@@ -1011,7 +998,7 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.1.4</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-07-19</span>
             </div>
             <div class="changelog-body">
@@ -1024,7 +1011,7 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.1.3</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-07-19</span>
             </div>
             <div class="changelog-body">
@@ -1038,7 +1025,7 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.1.2</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-06-15</span>
             </div>
             <div class="changelog-body">
@@ -1052,15 +1039,13 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.1.1</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-05-10</span>
             </div>
             <div class="changelog-body">
                 <ul>
-                    <li data-bg="Fallback за качество — ако няма резултати в избраното качество, показва всички с предупреждение" data-en="Quality fallback — if no results match your quality filter, shows all with a warning"></li>
-                    <li data-bg="По-добри логове при липсващи епизоди — показва наличните сезони/епизоди" data-en="Better miss logs for episodes — shows available seasons/episodes"></li>
-                    <li data-bg="Имена на торенти в логовете за по-лесен дебъг" data-en="Torrent titles in miss logs for easier debugging"></li>
-                    <li data-bg="Секция „Благодарности" за хората подкрепили проекта" data-en="Contributors section for people who supported the project"></li>
+                    <li data-bg="Ако няма резултати в избраното качество, показва всички с бележка" data-en="Quality fallback — if no results match your quality filter, shows all with a warning"></li>
+                    <li data-bg="Секция „Благодарности“ за хората, подкрепили проекта" data-en="Contributors section for people who supported the project"></li>
                 </ul>
             </div>
         </div>
@@ -1083,13 +1068,13 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.0.3</span>
-                <span class="changelog-tag tag-fix" data-bg="ПОДОБРЕНИЕ" data-en="UPDATE">ПОДОБРЕНИЕ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-05-05</span>
             </div>
             <div class="changelog-body">
                 <ul>
                     <li data-bg="По-добро разпознаване на епизоди при пакетни торенти" data-en="Better episode matching in season pack torrents"></li>
-                    <li data-bg="Подобрен BG аудио филтър — по-малко фалшиви miss-ове" data-en="Improved BG audio filter — fewer false misses"></li>
+                    <li data-bg="Подобрен филтър за БГ аудио — по-малко пропуснати торенти" data-en="Improved BG audio filter — fewer false misses"></li>
                 </ul>
             </div>
         </div>
@@ -1097,13 +1082,13 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.0.2</span>
-                <span class="changelog-tag tag-improved" data-bg="ОПТИМИЗАЦИЯ" data-en="OPTIMIZATION">ОПТИМИЗАЦИЯ</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-04-28</span>
             </div>
             <div class="changelog-body">
                 <ul>
                     <li data-bg="Оптимизирано търсене — по-бързи резултати при популярни заглавия" data-en="Optimized search — faster results for popular titles"></li>
-                    <li data-bg="Fix за дублирани резултати при някои сериали" data-en="Fix for duplicate results on some series"></li>
+                    <li data-bg="Поправени повтарящи се резултати при някои сериали" data-en="Fix for duplicate results on some series"></li>
                 </ul>
             </div>
         </div>
@@ -1111,13 +1096,13 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.0.1</span>
-                <span class="changelog-tag tag-fix" data-bg="КОРЕКЦИЯ" data-en="PATCH">КОРЕКЦИЯ</span>
+                <span class="changelog-tag tag-fix" data-bg="ПОПРАВКА" data-en="FIX">ПОПРАВКА</span>
                 <span class="changelog-date">2026-04-22</span>
             </div>
             <div class="changelog-body">
                 <ul>
-                    <li data-bg="Fix за anime заглавия с абсолютна номерация (Detective Conan, One Piece)" data-en="Fix for anime titles with absolute numbering (Detective Conan, One Piece)"></li>
-                    <li data-bg="Подобрена обработка на timeout при Real-Debrid" data-en="Improved Real-Debrid timeout handling"></li>
+                    <li data-bg="Поправени аниме заглавия с поредна номерация на епизодите (Detective Conan, One Piece)" data-en="Fix for anime titles with absolute numbering (Detective Conan, One Piece)"></li>
+                    <li data-bg="По-добре се справя, когато Real-Debrid се бави" data-en="Improved Real-Debrid timeout handling"></li>
                 </ul>
             </div>
         </div>
@@ -1125,16 +1110,15 @@
         <div class="changelog-entry">
             <div class="changelog-header">
                 <span class="changelog-version">v2.0.0</span>
-                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНО" data-en="IMPROVED">ПОДОБРЕНО</span>
+                <span class="changelog-tag tag-improved" data-bg="ПОДОБРЕНИЕ" data-en="IMPROVED">ПОДОБРЕНИЕ</span>
                 <span class="changelog-date">2026-04-18</span>
             </div>
             <div class="changelog-body">
                 <ul>
                     <li data-bg="Real-Debrid & TorBox интеграция" data-en="Real-Debrid & TorBox integration"></li>
-                    <li data-bg="БГ аудио филтър с fallback" data-en="BG audio filter with fallback"></li>
+                    <li data-bg="Филтър за БГ аудио (ако няма, показва всички)" data-en="BG audio filter with fallback"></li>
                     <li data-bg="Филтри за качество и размер" data-en="Quality and size filters"></li>
-                    <li data-bg="Анимe разпознаване (абсолютни епизоди)" data-en="Anime recognition (absolute episodes)"></li>
-                    <li data-bg="Статистика и логове в Upstash Redis" data-en="Stats and logs in Upstash Redis"></li>
+                    <li data-bg="Разпознаване на аниме (поредна номерация на епизодите)" data-en="Anime recognition (absolute episodes)"></li>
                 </ul>
             </div>
         </div>
@@ -1271,13 +1255,13 @@ function getManifestUrl() {
     const debrid = document.querySelector('input[name="debrid"]:checked').value;
     if (debrid === 'realdebrid') {
         const token = document.getElementById('rdToken').value.trim();
-        if (!token) { alert(currentLang === 'bg' ? 'Въведи Real-Debrid token' : 'Enter Real-Debrid token'); return null; }
-        if (token.length < 20) { alert(currentLang === 'bg' ? 'Token-ът изглежда невалиден' : 'Token looks invalid'); return null; }
+        if (!token) { alert(currentLang === 'bg' ? 'Въведи API ключа за Real-Debrid' : 'Enter your Real-Debrid API token'); return null; }
+        if (token.length < 20) { alert(currentLang === 'bg' ? 'Ключът изглежда невалиден' : 'The token looks invalid'); return null; }
     }
     if (debrid === 'torbox') {
         const token = document.getElementById('tbToken').value.trim();
-        if (!token) { alert(currentLang === 'bg' ? 'Въведи TorBox token' : 'Enter TorBox token'); return null; }
-        if (token.length < 10) { alert(currentLang === 'bg' ? 'Token-ът изглежда невалиден' : 'Token looks invalid'); return null; }
+        if (!token) { alert(currentLang === 'bg' ? 'Въведи API ключа за TorBox' : 'Enter your TorBox API token'); return null; }
+        if (token.length < 10) { alert(currentLang === 'bg' ? 'Ключът изглежда невалиден' : 'The token looks invalid'); return null; }
     }
     return window.location.origin + '/' + encodeURIComponent(buildConfigString()) + '/manifest.json';
 }
@@ -1314,11 +1298,8 @@ fetch('/stats')
         // RD/TorBox accounts + P2P install ids + older P2P installs' busiest day — a floor, not the
         // raw all-time id count, which grows with every new IP.
         const show = (id, n) => { if (n) document.getElementById(id).textContent = roundDown(n) + '+'; };
-        show('statUsers', s.totalUsers);
         show('statUsersHeader', s.totalUsers);
-        show('statStreams', s.streamRequests);
         show('statStreamsHeader', s.streamRequests);
-        show('statTorrents', s.archiveTorrents);
         show('statTorrentsHeader', s.archiveTorrents);
         // Only 'down' shows the notice — 'unknown' (a quiet period) must stay silent.
         if (s.sourceStatus === 'down') document.getElementById('sourceAlert').classList.add('show');
