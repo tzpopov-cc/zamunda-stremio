@@ -2347,7 +2347,13 @@ async function otherHostMetadata(type, imdbId, meta) {
     if (!other) return null;
     const y1 = parseYear(meta.year || meta.releaseInfo), y2 = parseYear(other.year || other.releaseInfo);
     const sameYear = !y1 || !y2 || Math.abs(y1 - y2) <= 1;
-    return normalizeTitle(other.name) === normalizeTitle(meta.name) && sameYear ? null : other;
+    const w1 = normalizeTitle(meta.name).split(' '), w2 = normalizeTitle(other.name).split(' ');
+    if (w1.join(' ') === w2.join(' ')) return sameYear ? null : other;
+    // Another name is searched only when one holds the other's words ("Ghostland" in "Incident in a Ghostland", "Besa"
+    // in "Besa: Blood Oath"): Hotel Tehran (2026) is "The Fix" on cinemeta-live, and only the year test kept the
+    // archive's "The.Fix.2024", another film, out of its list (review of 21.10.2026).
+    const within = (a, b) => a.every(w => b.includes(w));
+    return within(w1, w2) || within(w2, w1) ? other : null;
 }
 
 async function resolveStreams(type, fullId, config) {
@@ -2364,16 +2370,17 @@ async function resolveStreams(type, fullId, config) {
     }
     const before = { ...config };
     const streams = await resolveWithMeta(type, fullId, config, meta);
+    const told = rows => { if (rows._gap) logEvent('GAP', rows._gap); return rows; };
     // A dead end by the name (B-047): only when the main host gave it — a fallback answer already is the other host.
-    if (!streams._nameMiss || meta.fallback) return streams;
+    if (!streams._nameMiss || meta.fallback) return told(streams);
     const other = await otherHostMetadata(type, imdbId, meta);
-    if (!other) return streams;
+    if (!other) return told(streams);
     const again = { ...before, _otherName: true };
     const found = await resolveWithMeta(type, fullId, again, other);
     // Used when the other name finds the title at all — playable rows, or a truer notice: Besa is in the archive only
     // with season 2, and „Няма сезон 1 — в архива има S02" beats „Няма го в архива". Still a dead end, or the
     // archive gone mid-way: the first answer stands.
-    if (found._nameMiss || found.some(s => s.url === NOTICE_DOWN_URL)) return streams;
+    if (found._nameMiss || found.some(s => s.url === NOTICE_DOWN_URL)) return told(streams);
     // The answer used carries its own flags (caching, files pending), not the first search's.
     for (const k of Object.keys(config)) if (k.startsWith('_') && !(k in again)) delete config[k];
     Object.assign(config, again);
@@ -2381,9 +2388,12 @@ async function resolveStreams(type, fullId, config) {
 }
 
 // A dead end that a different name of the title might not be (B-047): nothing found, or nothing that is this
-// title. Marked on the array, which JSON does not carry, like `_noCache`.
-function nameMiss(rows) {
+// title. Marked on the array, which JSON does not carry, like `_noCache`. Its GAP line waits on the array until the
+// answer is chosen: logged at once, Ip Man 3 counted as „told why" next to its 12 streams, Besa S1E1 twice
+// (review of 21.10.2026).
+function nameMiss(rows, gap) {
     rows._nameMiss = true;
+    rows._gap = gap;
     return rows;
 }
 
@@ -2509,7 +2519,10 @@ async function resolveWithMeta(type, fullId, config, meta) {
     // "_" stands for a space in 3,9 % of archive names ("Slow_Horses_S05E05", "The_Wire_-_Season_1_-_1_2002_UHD"),
     // but it is a word character to every season and episode pattern: "Season_2" was never read, and
     // "Some_Show_S02_Complete" passed for S1E1 (B-019, v2.6.9). Matching reads the name with spaces, and so does the row.
-    allTorrents = allTorrents.map(t => t.title && t.title.includes('_') ? { ...t, title: spaced(t) } : t);
+    // Every row is this request's own copy: the search cache keeps the archive's row objects for an hour, and a request
+    // writes its file, file index and seeders onto them — one viewer's Real-Debrid file name showed on another's P2P
+    // rows of The Matrix (review of 21.10.2026).
+    allTorrents = allTorrents.map(t => t.title && t.title.includes('_') ? { ...t, title: spaced(t) } : { ...t });
 
     // Deduplicate by infohash. A row without one cannot be played, but it still shows the title IS in the
     // archive — kept aside for the row that says so (B-004).
@@ -2563,8 +2576,8 @@ async function resolveWithMeta(type, fullId, config, meta) {
             if (type === 'series' && season && episode) return noLinkEpisode() || [episodeNotFoundRow(config, meta.name, season, episode, seasonIsNew(meta, season))];
             return [noLinkRow(config, meta.name, titleYear)];
         }
-        logEvent('GAP', `${label} — 0 results from zamunda${nonVideo ? ` (${nonVideo} not films or series)` : ''}${hashless.length ? ` (${hashless.length} without a link, none this title)` : ''}`);
-        return nameMiss([notInArchiveRow(config, meta.name, titleYear)]);
+        return nameMiss([notInArchiveRow(config, meta.name, titleYear)],
+            `${label} — 0 results from zamunda${nonVideo ? ` (${nonVideo} not films or series)` : ''}${hashless.length ? ` (${hashless.length} without a link, none this title)` : ''}`);
     }
 
     // Episode matching for series
@@ -2591,11 +2604,12 @@ async function resolveWithMeta(type, fullId, config, meta) {
             // seasons cannot be named reliably ("2nd Season"), so the row names none. No such release: the show is
             // not in the archive (B-020).
             const underAltName = allTorrents.some(t => nameOf(t) && byAltOnly(t));
-            logEvent('GAP', `${label} — ${beforeCount} results, none carry the show name${underAltName ? ' (only under another name)' : ''} [${allTorrents.slice(0, 3).map(t => t.title).join(' | ')}]`);
+            const gap = `${label} — ${beforeCount} results, none carry the show name${underAltName ? ' (only under another name)' : ''} [${allTorrents.slice(0, 3).map(t => t.title).join(' | ')}]`;
             const noLink = noLinkEpisode();
+            if (noLink || underAltName) logEvent('GAP', gap);
             if (noLink) return noLink;
             if (underAltName) return [episodeNotFoundRow(config, meta.name, season, episode, seasonIsNew(meta, season))];
-            return nameMiss([notInArchiveRow(config, meta.name, parseYear(meta.year || meta.releaseInfo))]);
+            return nameMiss([notInArchiveRow(config, meta.name, parseYear(meta.year || meta.releaseInfo))], gap);
         }
         if (onShow.length < beforeCount) {
             console.log(`  ${onShow.length}/${beforeCount} carry the show name`);
@@ -2720,8 +2734,11 @@ async function resolveWithMeta(type, fullId, config, meta) {
             // (2026) the old series. The real victims were apostrophe/accent titles, which
             // normalizeTitle now handles — so an honest "not in the archive" row is what is left.
             console.log(`  movie match 0/${allTorrents.length} — not in archive`);
-            logEvent('GAP', `${label} — ${allTorrents.length} results, none are this film [${allTorrents.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
-            if (hashless.some(isThisTitle)) return [noLinkRow(config, meta.name, movieYear)];
+            const gap = `${label} — ${allTorrents.length} results, none are this film [${allTorrents.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`;
+            if (hashless.some(isThisTitle)) {
+                logEvent('GAP', gap);
+                return [noLinkRow(config, meta.name, movieYear)];
+            }
             const bgLang = (config.lang || 'bg') === 'bg';
             return nameMiss([{
                 name: bgLang ? 'ℹ️ Няма го в архива\nZamunda BG' : 'ℹ️ Not in the archive\nZamunda BG',
@@ -2729,7 +2746,7 @@ async function resolveWithMeta(type, fullId, config, meta) {
                     ? `„${meta.name}“${movieYear ? ` (${movieYear})` : ''} го няма в архива.\nИма само заглавия с подобно име.`
                     : `"${meta.name}"${movieYear ? ` (${movieYear})` : ''} is not in the archive.\nThe archive only has titles with a similar name.`,
                 url: NOTICE_INFO_URL,
-            }]);
+            }], gap);
         }
     }
 
@@ -2752,10 +2769,10 @@ async function resolveWithMeta(type, fullId, config, meta) {
             logEvent('GAP', `${label} — ${n} torrents, all over the size limit ${config.sizelimit}`);
             const bg = (config.lang || 'bg') === 'bg';
             return [{
-                name: bg ? 'ℹ️ Над ограничението\nZamunda BG' : 'ℹ️ Over your size limit\nZamunda BG',
+                name: bg ? 'ℹ️ Над максималния размер\nZamunda BG' : 'ℹ️ Over your maximum size\nZamunda BG',
                 title: bg
-                    ? `${n === 1 ? 'Единственият торент' : `Всички ${n} торента`} за „${meta.name}“ ${n === 1 ? 'е' : 'са'} над ограничението ти за размер.\nПромени го в настройките на добавката.`
-                    : `${n === 1 ? 'The only torrent' : `All ${n} torrents`} for "${meta.name}" ${n === 1 ? 'is' : 'are'} over your size limit.\nChange it in the addon settings.`,
+                    ? `${n === 1 ? 'Единственият торент' : `Всички ${n} торента`} за „${meta.name}“ ${n === 1 ? 'е' : 'са'} над максималния размер, който си избрал.\nПромени „Максимален размер“ в настройките на добавката.`
+                    : `${n === 1 ? 'The only torrent' : `All ${n} torrents`} for "${meta.name}" ${n === 1 ? 'is' : 'are'} over the maximum size you chose.\nChange "Maximum size" in the addon settings.`,
                 url: NOTICE_INFO_URL,
             }];
         };
@@ -3069,6 +3086,8 @@ function notInArchiveRow(config, name, year) {
 // 02–03.2026) and Furious S1 (07–08.2026) only said „не е намерен" (B-056). Without Cinemeta's air dates, the show's year.
 const FROZEN_EPISODES_BG = '\nАрхивът не получава нови торенти, затова новите епизоди липсват.';
 const FROZEN_EPISODES_EN = '\nThe archive gets no new torrents, so new episodes are missing.';
+const FROZEN_SEASONS_BG = '\nАрхивът не получава нови торенти, затова новите сезони липсват.';
+const FROZEN_SEASONS_EN = '\nThe archive gets no new torrents, so new seasons are missing.';
 function seasonIsNew(meta, season) {
     const sy = meta.seasonYears && meta.seasonYears[season];
     const y = sy ? sy[0] : parseYear(meta.year || meta.releaseInfo);
@@ -3080,8 +3099,8 @@ function noSeasonRow(config, season, seasons, isNew) {
     const avail = [...seasons].sort((a, b) => a - b).map(s => `S${String(s).padStart(2, '0')}`).join(',');
     return {
         name: bg ? `ℹ️ Няма сезон ${season}\nZamunda BG` : `ℹ️ No season ${season}\nZamunda BG`,
-        title: bg ? `Сезон ${season} го няма в архива.\nВ архива има: ${avail}${isNew ? FROZEN_EPISODES_BG : ''}`
-            : `Season ${season} is not in the archive.\nThe archive has: ${avail}${isNew ? FROZEN_EPISODES_EN : ''}`,
+        title: bg ? `Сезон ${season} го няма в архива.\nВ архива има: ${avail}${isNew ? FROZEN_SEASONS_BG : ''}`
+            : `Season ${season} is not in the archive.\nThe archive has: ${avail}${isNew ? FROZEN_SEASONS_EN : ''}`,
         url: NOTICE_INFO_URL,
     };
 }
@@ -3201,7 +3220,8 @@ function buildStream(torrent, url, mode) {
     };
     // The file this row plays, when it is known (the P2P file index, the debrid file): subtitle addons match their
     // subtitles to its name and size (Stremio's stream docs: "highly recommended" with a `url`) (B-051, v2.7.0).
-    const file = torrent._file;
+    // A P2P row names its file only with the index that plays it.
+    const file = url || typeof torrent._resolvedFileIdx === 'number' ? torrent._file : null;
     if (file && file.name) {
         stream.behaviorHints.filename = String(file.name).split('/').pop();
         if (file.size > 0) stream.behaviorHints.videoSize = Number(file.size);

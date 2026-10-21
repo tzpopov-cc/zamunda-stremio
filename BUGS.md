@@ -17,6 +17,28 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-057 — one viewer's debrid file name on another viewer's P2P rows** (T-311 review, medium, VERIFIED, closed by
+  T-311): a film's rows are the search cache's own objects (kept an hour); a Real-Debrid or TorBox request wrote its
+  chosen file onto them (`_file`, new in T-304), and the next P2P request of the same film sent that name and size to
+  subtitle addons on rows without a file index — The Matrix: 6 P2P rows, among them the trilogy packs, where the player
+  picks the biggest file. v2.6.9 shared `_quality`, `_seeders`, `_resolvedFileIdx` the same way. Fixed: every row is
+  the request's own copy, and a P2P row names its file only with the index that plays it. Check: P2P → RD → P2P on
+  The Matrix: 6 rows with a foreign file name before, 0 now.
+- **B-058 — the other Cinemeta name searched even when it is another title** (T-311 review, low-medium, suspected,
+  closed by T-311): Hotel Tehran (2026) is "The Fix" on cinemeta-live; the archive's "The.Fix.2024" (another film)
+  was kept out only by the year test, and a series has no such test without years in the names. Fixed: the other
+  name is searched when it is the same name in another year (Ip Man 3) or one name holds the other's words (Ghostland /
+  Incident in a Ghostland, Besa / Besa: Blood Oath). Check: "The Fix" no longer searched; Ghostland 2 rows, Ip Man 3
+  12, Besa S2E3 1, Besa S1E1 „Няма сезон 1 (S02)" — as before.
+- **B-059 — the second search wrote a second "told why" line** (T-311 review, low, VERIFIED, closed by T-311): the
+  first search's dead-end GAP was logged before the other name was tried — the dashboard counted Ip Man 3 as „told
+  why" next to its 12 streams, Besa S1E1 twice. Fixed: the GAP line of a dead end waits on the answer and is logged
+  only if that answer is the one shown. Check: Ip Man 3 → SEARCH + P2P 12; Besa S1E1 → SEARCH + one GAP.
+- **B-060 — wording found by the review** (T-311, low, closed by T-311): a missing season said „новите епизоди
+  липсват" → „новите сезони"; the outage banner's title still said „Източникът на торенти" → „Архивът е недостъпен";
+  the size notice said „ограничението ти за размер" while the setting reads „Максимален размер" → „над максималния
+  размер, който си избрал. Промени „Максимален размер“…". Kept: „ℹ️ Няма епизод N" also where the show is in the
+  archive only under a longer name — the episode is not there on every path, and T-305 gave each kind one name.
 - **B-056 — a release group read as a season in the notice** (found by the T-309 replay, v2.6.9 too; closed by
   T-310): Furious (2026) S1E1 and S2E3 said „Няма сезон N — В архива има: S00". The S00 is "HS0", the release group
   at the end of three Fast & Furious films ("Fast.And.Furious.2009.BRRip.XviD.DUAL-HS0"): the dead end read every
