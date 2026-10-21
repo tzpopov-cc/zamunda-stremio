@@ -318,16 +318,18 @@ function configFingerprint(config) {
 // MANIFEST — dynamic based on config
 // =====================================================
 function buildManifest(config) {
-    const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
+    const mode = config.debrid === 'realdebrid' ? 'Real-Debrid' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
+    // The three sites the archive holds and the mode in full; a 1600×900 picture for the addon's page — Stremio
+    // stretched the 512 px icon there (B-054, v2.7.0).
     return {
         id: 'community.zamunda.bgaudio',
         version: '2.6.9',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
-            ? `Филми и сериали от Zamunda архива (${mode} режим)`
-            : `Movies and series from Zamunda archive (${mode} mode)`,
+            ? `Филми и сериали от архива на Zamunda, ArenaBG и Zelka (режим ${mode})`
+            : `Movies and series from the Zamunda, ArenaBG and Zelka archive (${mode} mode)`,
         logo: 'https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png',
-        background: 'https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/icon.png',
+        background: 'https://raw.githubusercontent.com/tzpopov-cc/zamunda-stremio/main/background.jpg',
         types: ['movie', 'series'],
         catalogs: [],
         resources: ['stream'],

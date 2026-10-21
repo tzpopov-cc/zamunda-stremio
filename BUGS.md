@@ -5,10 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-054 — manifest and README say less or older things** (T-301; owner T-307): the manifest says „от Zamunda
-  архива (RD режим)" and uses the 512 px icon as its background picture; the README says "450K+" (448 023), lists
-  the Upstash variables (gone), its self-host steps skip `config.html` (the server stops at start) and its Bulgarian
-  is half English („torrent streaming", „Addon-ът", „hash-ове", „resolve-ва").
 - **B-055 — Cinemeta's main host gives a wrong year** (found with B-047, T-301; owner T-308): tt2888046 Ip Man 3 is
   2025 on v3-cinemeta (released 2025-10-05, a re-release) and 2015 on cinemeta-live; the archive has three
   "Ip.Man.3.2015…" rows and the film test (±1 year) rejects them all → „Няма го в архива". Of 291 measured ids the
@@ -44,6 +40,10 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-054 — manifest and README say less or older things** (T-301; closed by T-307): the manifest says „от Zamunda
+  архива (RD режим)" and uses the 512 px icon as its background picture; the README says "450K+" (448 023), lists
+  the Upstash variables (gone), its self-host steps skip `config.html` (the server stops at start) and its Bulgarian
+  is half English („torrent streaming", „Addon-ът", „hash-ове", „resolve-ва"). Fixed in T-307.
 - **B-053 — the config page: a broken line, a doubled box, English words, faint text** (T-301 text audit; closed
   by T-306): changelog `data-bg="Секция „Благодарности" за хората…"` — the straight quote ends the attribute, so the
   line shows „Секция „Благодарности" only; the numbers box twice (top and above the support box); „Streaming метод",
