@@ -88,5 +88,5 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       season's air years (B-025).
 - [x] **T-310** The dead end reads seasons only from real season marks; a notice for a season first aired in 2026 or
       later says the archive gets no new torrents (B-056).
-- [ ] **T-311** End of stage 3: fresh-context review → fixes → full replay vs v2.6.9 (0 lost right rows) → v2.7.0 →
+- [x] **T-311** End of stage 3: fresh-context review → fixes → full replay vs v2.6.9 (0 lost right rows) → v2.7.0 →
       push → deploy with backup → live checks.
