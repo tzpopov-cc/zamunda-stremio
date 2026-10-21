@@ -5,11 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-056 — a release group read as a season in the notice** (found by the T-309 replay, v2.6.9 too; owner
-  T-310): Furious (2026) S1E1 and S2E3 say „Няма сезон N — В архива има: S00". The S00 is "HS0", the release group
-  at the end of three Fast & Furious films ("Fast.And.Furious.2009.BRRip.XviD.DUAL-HS0"): the dead end reads every
-  "S" + digits as a season. "DTS5.1" would read as S05 the same way. And the rows carrying "Furious" are all films,
-  so the show is not in the archive at all — the answer should say that (the archive gets no new torrents).
 - **B-037 — an anime whose archive name joins its hyphenated words is called missing** (deferred — the fix alone
   offers a wrong file). Found by the T-201 bug hunt pass 4: Mushi-Shi S1E11 → „Няма го в архива"; the archive has
   "[YSAnime] Mushishi [BDRip H.264 1920x1080 AAC]" (14,17 GB) and "[RyuKo]Mushishi" (8,10 GB). Kitsu's romaji name
@@ -22,6 +17,15 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-056 — a release group read as a season in the notice** (found by the T-309 replay, v2.6.9 too; closed by
+  T-310): Furious (2026) S1E1 and S2E3 said „Няма сезон N — В архива има: S00". The S00 is "HS0", the release group
+  at the end of three Fast & Furious films ("Fast.And.Furious.2009.BRRip.XviD.DUAL-HS0"): the dead end read every
+  "S" + digits as a season — 83 of the 15 182 names in the replay cache carry such a token (HS0, PS3, ES2…). Fixed:
+  a season mark starts after a non-letter. Also: a season that first aired in 2026 or later now says why it is
+  missing (the archive gets no new torrents) — Furious, Cross S2, Ted Lasso S4, Silo S3… (32 notices in the replay).
+  Tried and dropped: „Няма го в архива" when only films carry the name — the search for one season sees part of the
+  archive only ("Cross" S2E5 saw none of the Cross S01 releases), and the archive files Formula 1 race weekends
+  under films, so that verdict would have been untrue for both.
 - **B-025 — a later series of the same name is offered for the earlier one** (closed by T-309). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
   the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
   revival filed under the old show (Twin Peaks S03 2017 under 1990–1991) would read the same way, so it is not

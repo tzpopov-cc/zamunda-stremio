@@ -2560,7 +2560,7 @@ async function resolveWithMeta(type, fullId, config, meta) {
             logEvent('GAP', `${label} — ${hashless.length} results, all without a link [${hashless.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
             // An episode is "there without a link" only by a row that names its season, as below: "East Of Eden -
             // E01-04" (the 2008 drama) said so for the 2026 series' S1E1 (B-043, review of 21.10.2026).
-            if (type === 'series' && season && episode) return noLinkEpisode() || [episodeNotFoundRow(config, meta.name, season, episode)];
+            if (type === 'series' && season && episode) return noLinkEpisode() || [episodeNotFoundRow(config, meta.name, season, episode, seasonIsNew(meta, season))];
             return [noLinkRow(config, meta.name, titleYear)];
         }
         logEvent('GAP', `${label} — 0 results from zamunda${nonVideo ? ` (${nonVideo} not films or series)` : ''}${hashless.length ? ` (${hashless.length} without a link, none this title)` : ''}`);
@@ -2594,7 +2594,7 @@ async function resolveWithMeta(type, fullId, config, meta) {
             logEvent('GAP', `${label} — ${beforeCount} results, none carry the show name${underAltName ? ' (only under another name)' : ''} [${allTorrents.slice(0, 3).map(t => t.title).join(' | ')}]`);
             const noLink = noLinkEpisode();
             if (noLink) return noLink;
-            if (underAltName) return [episodeNotFoundRow(config, meta.name, season, episode)];
+            if (underAltName) return [episodeNotFoundRow(config, meta.name, season, episode, seasonIsNew(meta, season))];
             return nameMiss([notInArchiveRow(config, meta.name, parseYear(meta.year || meta.releaseInfo))]);
         }
         if (onShow.length < beforeCount) {
@@ -2633,7 +2633,7 @@ async function resolveWithMeta(type, fullId, config, meta) {
             const ownName = allTorrents.some(t => !prefixOf(t));
             if (!plain.length && (!ownName || new Set(matched.map(prefixOf)).size > 1 || matched.length < 2)) {
                 logEvent('GAP', `${label} — ${matched.length} episode matches, all under a longer name [${matched.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
-                return [episodeNotFoundRow(config, meta.name, season, episode)];
+                return [episodeNotFoundRow(config, meta.name, season, episode, seasonIsNew(meta, season))];
             }
             allTorrents = plain.length ? plain : matched;
         } else {
@@ -2664,10 +2664,10 @@ async function resolveWithMeta(type, fullId, config, meta) {
                 const episodes = new Set();
                 allTorrents.forEach(t => {
                     const u = t.title.toUpperCase();
-                    const sm = u.match(/S(\d+)/g);
+                    const sm = u.match(/(?<![A-Z0-9])S(\d+)/g);   // not the group "HS0" or "DTS5.1" (B-056)
                     if (sm) sm.forEach(s => seasons.add(parseInt(s.slice(1))));
                     declaredSeasons(u).forEach(d => seasons.add(d.season));   // "Season 4 Part 1", "Kuroko's Basketball 3 - 25"
-                    const em = u.match(/S\d+E(\d+)/g);
+                    const em = u.match(/(?<![A-Z0-9])S\d+E(\d+)/g);
                     if (em) em.forEach(e => episodes.add(parseInt(e.match(/E(\d+)/)[1])));
                 });
                 // The reason belongs on screen, not only in the log. Returning nothing at all
@@ -2677,7 +2677,7 @@ async function resolveWithMeta(type, fullId, config, meta) {
                 let detail = '';
                 let missRow = null;
                 if (seasons.size > 0 && !seasons.has(season)) {
-                    missRow = noSeasonRow(config, season, seasons);
+                    missRow = noSeasonRow(config, season, seasons, seasonIsNew(meta, season));
                     detail = ` (available: ${[...seasons].sort((a, b) => a - b).map(s => `S${String(s).padStart(2, '0')}`).join(',')})`;
                 } else if (episodes.size > 0 && !episodes.has(episode)) {
                     const maxEp = Math.max(...episodes);
@@ -2686,15 +2686,15 @@ async function resolveWithMeta(type, fullId, config, meta) {
                     missRow = {
                         name: bgLang ? `ℹ️ Няма епизод ${episode}\nZamunda BG` : `ℹ️ No episode ${episode}\nZamunda BG`,
                         title: bgLang
-                            ? `Епизод ${episode} го няма в архива.\nПоследният в архива е ${latest}.`
-                            : `Episode ${episode} is not in the archive.\nThe latest one there is ${latest}.`,
+                            ? `Епизод ${episode} го няма в архива.\nПоследният в архива е ${latest}.${seasonIsNew(meta, season) ? FROZEN_EPISODES_BG : ''}`
+                            : `Episode ${episode} is not in the archive.\nThe latest one there is ${latest}.${seasonIsNew(meta, season) ? FROZEN_EPISODES_EN : ''}`,
                         url: NOTICE_INFO_URL,
                     };
                 }
                 // Releases of the show, but none names a season or an episode to point at (Detective Hole ← the film
                 // "Detective.Dee…Hole.2023", Formula 1 S77 ← race weekends): still a row, not an empty list (B-020).
                 if (!missRow) {
-                    missRow = episodeNotFoundRow(config, meta.name, season, episode);
+                    missRow = episodeNotFoundRow(config, meta.name, season, episode, seasonIsNew(meta, season));
                     detail = ' (nothing to name)';
                 }
                 const titles = allTorrents.slice(0, 3).map(t => t.title.substring(0, 80));
@@ -2833,7 +2833,7 @@ async function resolveWithMeta(type, fullId, config, meta) {
                 console.log(`  ${lacking.length} pack(s) without S${season}E${episode} in their files left out`);
                 if (!filtered.length) {
                     logEvent('GAP', `${label} — only packs without this episode in their files [${lacking.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
-                    return [episodeNotFoundRow(config, meta.name, season, episode)];
+                    return [episodeNotFoundRow(config, meta.name, season, episode, seasonIsNew(meta, season))];
                 }
             }
         }
@@ -3065,24 +3065,34 @@ function notInArchiveRow(config, name, year) {
         url: NOTICE_INFO_URL,
     };
 }
+// A season that first aired in the archive's last year or later: the row says why it is missing — Cross S2 (aired
+// 02–03.2026) and Furious S1 (07–08.2026) only said „не е намерен" (B-056). Without Cinemeta's air dates, the show's year.
+const FROZEN_EPISODES_BG = '\nАрхивът не получава нови торенти, затова новите епизоди липсват.';
+const FROZEN_EPISODES_EN = '\nThe archive gets no new torrents, so new episodes are missing.';
+function seasonIsNew(meta, season) {
+    const sy = meta.seasonYears && meta.seasonYears[season];
+    const y = sy ? sy[0] : parseYear(meta.year || meta.releaseInfo);
+    return !!y && y >= ARCHIVE_FROZEN_YEAR;
+}
 // Season N is not in the archive; the seasons it has.
-function noSeasonRow(config, season, seasons) {
+function noSeasonRow(config, season, seasons, isNew) {
     const bg = (config.lang || 'bg') === 'bg';
     const avail = [...seasons].sort((a, b) => a - b).map(s => `S${String(s).padStart(2, '0')}`).join(',');
     return {
         name: bg ? `ℹ️ Няма сезон ${season}\nZamunda BG` : `ℹ️ No season ${season}\nZamunda BG`,
-        title: bg ? `Сезон ${season} го няма в архива.\nВ архива има: ${avail}` : `Season ${season} is not in the archive.\nThe archive has: ${avail}`,
+        title: bg ? `Сезон ${season} го няма в архива.\nВ архива има: ${avail}${isNew ? FROZEN_EPISODES_BG : ''}`
+            : `Season ${season} is not in the archive.\nThe archive has: ${avail}${isNew ? FROZEN_EPISODES_EN : ''}`,
         url: NOTICE_INFO_URL,
     };
 }
 // Releases of the show, but none for this episode and nothing that names what is there (B-020).
-function episodeNotFoundRow(config, name, season, episode) {
+function episodeNotFoundRow(config, name, season, episode, isNew) {
     const bg = (config.lang || 'bg') === 'bg';
     return {
         name: bg ? `ℹ️ Няма епизод ${episode}\nZamunda BG` : `ℹ️ No episode ${episode}\nZamunda BG`,
         title: bg
-            ? `Сезон ${season}, епизод ${episode} на „${name}“ не е намерен в архива.`
-            : `Season ${season}, episode ${episode} of "${name}" was not found in the archive.`,
+            ? `Сезон ${season}, епизод ${episode} на „${name}“ не е намерен в архива.${isNew ? FROZEN_EPISODES_BG : ''}`
+            : `Season ${season}, episode ${episode} of "${name}" was not found in the archive.${isNew ? FROZEN_EPISODES_EN : ''}`,
         url: NOTICE_INFO_URL,
     };
 }

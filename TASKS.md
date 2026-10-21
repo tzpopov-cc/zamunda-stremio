@@ -86,5 +86,5 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       B-055).
 - [x] **T-309** A show of the same name from other years is not offered: a release's own years against the asked
       season's air years (B-025).
-- [ ] **T-310** The dead end reads seasons only from real season marks, and a show whose name only films carry is
-      „Няма го в архива" (B-056).
+- [x] **T-310** The dead end reads seasons only from real season marks; a notice for a season first aired in 2026 or
+      later says the archive gets no new torrents (B-056).
