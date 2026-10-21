@@ -5,6 +5,14 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
+- **B-047 — Cinemeta's main host names a film differently from its releases** (no owner yet — found by the T-221
+  replay, v2.6.8 too): tt6195094 is "Incident in a Ghostland" on v3-cinemeta and "Ghostland" on cinemeta-live
+  (21.10.2026); the archive has "Ghostland.2018.720p.BluRay.x264.AC3-HUD" and "Ghostland.2018.BRRip.XViD.AC3-HUD",
+  and reads every word as a substring, so the main name finds 0 rows → „Няма го в архива". The replay pair got
+  different names for the same id (one server's main host timed out), which is the only difference of the T-221
+  fixes over the 387 ids. Needs a measurement first: how many titles the two hosts name differently, and whether
+  the other name finds the release.
+
 - **B-037 — an anime whose archive name joins its hyphenated words is called missing** (deferred — the fix alone
   offers a wrong file). Found by the T-201 bug hunt pass 4: Mushi-Shi S1E11 → „Няма го в архива"; the archive has
   "[YSAnime] Mushishi [BDRip H.264 1920x1080 AAC]" (14,17 GB) and "[RyuKo]Mushishi" (8,10 GB). Kitsu's romaji name
@@ -17,12 +25,45 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
   revival filed under the old show (Twin Peaks S03 2017 under 1990–1991) would read the same way, so it is not
   folded into T-208. Same kind: "Death Note - 01 (2015 Drama Series)" (the live-action drama) offered for the
-  2006 anime S1E1 (T-208 replay).
+  2006 anime S1E1 (T-208 replay). The T-221 review: MacGyver (1985) S1E1 is offered "MacGyver.2016.S01E01.HDTV.1080p
+  .x264.BGAudio-4PLAY", MacGyver (2016) S1E7 the 1985 "MacGyver s01" XviD pack. The "<name> Season N" search already
+  drops a row whose years fall outside the show's run (B-045).
 - **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
   answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-039 — "Grey_s_Anatomy" no longer passes for Grey's Anatomy** (found by the T-221 review, a T-203 regression,
+  closed by T-221): T-203 turns every "_" into a space before matching, and `normalizeWords`, which folded "Grey_s"
+  into "greys", never sees the underscore. Grey's Anatomy S22E02, E03, E07 (the current season; "Grey_s_Anatomy_
+  S22E07", 946 MB) → „Не е намерен" where v2.6.8 played them; at matcher level the same for "Ocean_s_Eleven_2001",
+  "Schindler_s_List_1993", "Don_t_Look_Up_2021", "The_Handmaid_s_Tale_S06E01", "Bob_s_Burgers_S14E05". No replay id
+  asks for such a name.
+- **B-040 — a failed extra search leaves a cached „Няма го"** (T-221 review, closed by T-221): a deep-search page or
+  the "<name> Season N" search that does not come back was dropped silently; the notice built without it was cached
+  for 1 h, so Hunter x Hunter S1E1 and Joey S1E23 kept „Няма го" / „Не е намерен" after the archive answered again.
+  v2.6.8 did the same when a main query failed (NCIS S2E5 „Няма сезон 2").
+- **B-041 — the deep search had no time limit and paged for names it cannot find** (T-221 review, closed by T-221): a
+  slow archive (3 s per page) made the first Hunter x Hunter answer 15 s; two requests at once read the same pages
+  twice (49 calls instead of 25); "The O.C." is searched as "the" + "o" + "c", every row of the archive — 19 pages per
+  request every 6 h, nothing found. Accepted: a batch fetches its four pages in parallel even when the first is the
+  last (at most 3 extra calls, once per 6 h).
+- **B-042 — the deep-search result was shared by every title of the name** (T-221 review, closed by T-221): kept per
+  name only, though which rows are kept depends on film or series and the film's year — a film "Colony" (2026) asked
+  first left the series Colony (2016–2018) with the film's empty answer for 6 h (made-up pages, real name).
+- **B-043 — „Без връзка" for an episode from rows that name no season** (T-221 review, v2.6.8 too, closed by T-221):
+  when every result is without a link, the show-level row was given — East of Eden (2026) S1E1 from "East Of Eden -
+  E01-04" (the 2008 drama), the claim T-219 stops elsewhere.
+- **B-044 — a short joined abbreviation is a common word** (T-221 review, T-202, closed by T-221): "I.T." (2016) got
+  the own name "IT" and took "It.2017.1080p.BluRay" (±1 year); "D.O.A.", "W.E.", "S.O.B." the same. No such row in
+  the replay cache.
+- **B-045 — the season search can bring another show's pack of the same name** (T-221 review, suspected, closed by
+  T-221 for the season search; the main search stays B-025): "<name> Season N" mostly finds DVD-era packs and the
+  check was only the name and the episode — a 2026 reboot could get the old show's season. MacGyver (1985) /
+  MacGyver (2016) show the same in the main results (v2.6.8 too, B-025).
+- **B-046 — the deep-search trigger and the namesake rule disagreed** (T-221 review, suspected, closed by T-221): a
+  yearless exact-name film row on page 1 stopped the deep search, then T-220 dropped that row as a namesake — „Няма
+  го" without the archive read further.
 - **B-038 — a release without a year is taken for a recent film of the same name** (found by the T-201 bug hunt
   pass 5, live searches 20.10 ~23:15 – 23:53 UTC, closed by T-220): Don't Move (2026, a spider horror film) → „Без
   връзка в архива", from "Don't.Move.DVDRip.XviD.6CH.AC3-FaN" (no year, no description, no link) — by its age the

@@ -98,7 +98,7 @@ position in the WHOLE torrent (subtitles and .nfo included), which is what Strem
 server expects as `fileIdx`. It is a cache, not data to protect: delete it and it rebuilds on demand.
 
 Rollback: the server keeps `server.js.bak-<version>-predeploy` + `config.html.bak-<version>-predeploy`
-for every deploy (2.6.2 – 2.6.7 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
+for every deploy (2.6.2 – 2.6.8 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
 Since 2.6.7 a deploy also tags the old image (`docker tag zamunda-stremio-zamunda-stremio:latest …:<old version>`)
 and copies `data/` to `data.bak-<old version>-predeploy` while the container is STOPPED (build first, then
 `stop` → `cp -a` → `up -d`: about 3 s down, and the copy is consistent).
@@ -232,6 +232,54 @@ An empty list reads as a broken addon, so every dead end now carries a row (all 
   milliseconds (20.10.2026: median 12 ms; slowest from the server 2,1 s), so 5 s was a hang. The fallback
   names 7 % of titles differently ("Toplo" → "The Central Warmth", which the archive does not have), so
   its answer is kept 30 min, not 24 h, and a list built on it is not cached.
+
+### Matching, search depth and notices (v2.6.9)
+
+Stage 2 of the bug loop (T-201 hunt, five passes over real searches; T-202 – T-220). Each rule from a real
+wrong or missing answer:
+- **Series.** A dotted abbreviation is searched and matched joined too ("Chicago P.D." → "Chicago PD",
+  "S.W.A.T.", "The O.C."), but not when the joined word is short and alone ("I.T." is not "IT"). "_" reads as a space
+  ("Chicago_PD_S01E02", "The_Wire_-_Season_2") and as an apostrophe before s/t/d/m/ll/re/ve ("Grey_s_Anatomy",
+  `spaceUnderscores`). A DVD disc
+  ("S01.D02.DVD5") is never an episode. A repeated name word passes ("Hunter x Hunter"); the name's words in
+  another order do not ("Eden of the East" is not East of Eden). An episode range without a season ("01 - 21",
+  "1-293", "S01E01-02" for later seasons) counts for season 1 only. A season list ("Season 1,2,3", "Seasons 1 &
+  2", "Сезони 1 и 2") is a pack of each listed season. A film of the same name is left out of a series: a bare or
+  "complete" release filed as a film / Blu-ray disc, or with years outside the show's run (Carrie 1976/2013 for
+  Carrie 2026, U.S. Marshals 1998 for Marshals). A P2P pack whose known file list holds other episodes of the
+  season but not this one is not offered ("Stranger Things S05 Vol.2" = E05–E07, not E01).
+- **Films.** A yearless release is checked against the years in its archive description ("Aladdin" described as
+  the 1994–1995 TV series is not Aladdin 2019). A long name (four words or more, articles aside) matched exactly
+  allows two years of difference (The Witch: Part 1, 2018 vs Cinemeta's 2020). A yearless release is not taken for
+  a film when releases of the same name state years and none is the film's (Don't Move 2026 vs 2004/2024 —
+  `namesakesOnly`).
+- **Search depth.** `deepSearch`: when the name's own query returns a full page (50 rows) with nothing of the
+  title, the next pages are read (4 at a time, up to `DEEP_MAX_ROWS` = 1 000, at most `DEEP_BUDGET_MS` = 5 s in all),
+  only rows carrying the name kept, remembered 6 h per film/series and year — an empty answer too; two requests at
+  once share one read. Not for a name without a word of four letters ("The O.C." searches every row). Hunter x
+  Hunter's BG packs were on page 13. **Season search:** a show that is in the results with no playable row of the
+  episode under its plain name is searched once more as "<name> Season N" (`shortenQuery` keeps a "Season N" tail);
+  only rows that are this episode under the plain name, with no year outside the show's run, join (Grey's Anatomy
+  S4 = "Greys.Anatomy.S01-16", Joey S1 = "Joey Season 1 [BGAudio]"). The log line is `season search "…": N row(s)
+  of SxEy`. **A search that did not come back** (a main query, a deep page, the time limit, the season search) sets
+  `config._upstreamPartial`: a list of notices only is then not cached, so the next request asks again.
+- **Quality labels.** A pack with no quality word is not labelled by its total size ("SOUTHPARK Season 01-27",
+  105 GB, was "4K") — it shows "?" unless a fetched file list says; DVD5/DVD9/DVDR/DivX/TVRip/PDTV and 594p/576p/
+  480p read as SD.
+- **What the viewer is told.** Every dead end with a known reason has a row (non-video rows leave before
+  matching; „Не е намерен" for "no row carries the show name"). „Само кеширани" with nothing cached says so and how
+  to see the P2P releases. An episode the archive has only without an infohash gets „Без връзка в архива" naming
+  the season and episode (The Simpsons S9) — only for a row under the plain name that states its season, also when
+  every result is linkless; otherwise „Не е намерен".
+- **Links.** A v2.0.0 link's `rdmode=all` is "debrid + P2P" again. A config segment with a broken "%" gets a plain
+  400 ("bad config link" / "bad play link" / "bad request"); the last Express error handler logs only the status
+  and the error's name — no stack trace, no file paths, no token.
+
+Tested: replay 387 ids vs v2.6.8 — 91 rows lost, every one a wrong release (other films, other shows, other
+seasons, DVD discs, packs without the episode); 33 gained (Chicago P.D., Hunter x Hunter, NCIS S2, My Hero Academia
+S8, Stranger Things S5E8 finale, The Witch…); 47 info rows changed, 0 errors. The fresh-context review then found
+8 more (B-039…B-046, among them "Grey_s_Anatomy" no longer matching — no replay id asks for such a name); after
+the fixes the replay is the same.
 
 ### TorBox plays on demand (v2.6.7)
 

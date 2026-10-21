@@ -321,7 +321,7 @@ function buildManifest(config) {
     const mode = config.debrid === 'realdebrid' ? 'RD' : config.debrid === 'torbox' ? 'TorBox' : 'P2P';
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.6.8',
+        version: '2.6.9',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от Zamunda архива (${mode} режим)`
@@ -925,9 +925,14 @@ async function searchZamunda(rawQuery) {
 // with them), the answer ends, or DEEP_MAX_ROWS. Only the rows that carry the name are kept. The result is remembered
 // for DEEP_TTL_MS — an empty one too, so a title that is not there does not page again on every request — and the
 // rows found go to the index as well, for the day the archive is down.
+// Which rows are kept depends on the request (a film's year, film or series), so the result is remembered per
+// `scope`: a film "Colony" (2026) asked first left the series Colony with its empty answer for 6 h (B-042). The whole
+// read stops after DEEP_BUDGET_MS, and two requests for the same read share one (B-041, review of 21.10.2026).
 const DEEP_MAX_ROWS = 1000;
 const DEEP_PARALLEL = 4;
 const DEEP_TTL_MS = 6 * 60 * 60 * 1000;
+const DEEP_BUDGET_MS = 5000;
+const deepInflight = new Map();
 
 async function fetchPage(query, offset) {
     for (const base of PROVIDERS) {
@@ -945,17 +950,29 @@ async function fetchPage(query, offset) {
     return null;
 }
 
-async function deepSearch(rawQuery, carries) {
+// { rows, failed }: failed = a page did not come (or the time ran out), so the answer is not the archive's last word.
+async function deepSearch(rawQuery, carries, scope) {
     const query = sanitizeQuery(rawQuery);
-    const key = `deep:${query.toLowerCase()}`;
+    const key = `deep:${scope}:${query.toLowerCase()}`;
     const cached = getCached(key);
-    if (cached) return cached;
+    if (cached) return { rows: cached, failed: false };
+    if (!deepInflight.has(key)) deepInflight.set(key, deepRead(query, carries, key, `${query} #deep ${scope}`)
+        .finally(() => deepInflight.delete(key)));
+    return deepInflight.get(key);
+}
+
+async function deepRead(query, carries, key, idxKey) {
     const found = [];
+    const deadline = Date.now() + DEEP_BUDGET_MS;
     let pages = 0, seen = false, done = false, failed = false;
     for (let off = 50; !done && off < DEEP_MAX_ROWS; off += 50 * DEEP_PARALLEL) {
         const offsets = [];
         for (let k = 0; k < DEEP_PARALLEL && off + 50 * k < DEEP_MAX_ROWS; k++) offsets.push(off + 50 * k);
-        const batch = await Promise.all(offsets.map(o => fetchPage(query, o)));
+        let timer;
+        const late = new Promise(r => { timer = setTimeout(() => r(null), Math.max(0, deadline - Date.now())); });
+        const batch = await Promise.race([Promise.all(offsets.map(o => fetchPage(query, o))), late]);
+        clearTimeout(timer);
+        if (batch === null) { failed = true; console.log(`  deep search "${query}": out of time`); break; }
         for (const rows of batch) {
             if (rows === null) { failed = done = true; break; }
             pages++;
@@ -967,12 +984,12 @@ async function deepSearch(rawQuery, carries) {
     }
     console.log(`  deep search "${query}": ${pages} more page(s), ${found.length} row(s) of the title${failed ? ' (upstream failed)' : ''}`);
     if (failed && !found.length) {
-        const stored = idxGet(`${query} #deep`);
-        return stored ? stored.rows : [];
+        const stored = idxGet(idxKey);
+        return { rows: stored ? stored.rows : [], failed };
     }
     if (!failed) setCached(key, found, DEEP_TTL_MS);
-    if (found.length) { idxPut(`${query} #deep`, found); catPut(found); }
-    return found;
+    if (found.length) { if (!failed) idxPut(idxKey, found); catPut(found); }
+    return { rows: found, failed };
 }
 
 // Parse a release name once and memoise it on the torrent. parsium-media is the same
@@ -1959,10 +1976,21 @@ function normalizeTitle(s) {
 // Cinemeta writes abbreviations with dots ("Chicago P.D.", "S.W.A.T.", "The O.C."), most releases without
 // ("Chicago.PD.S01.720p…"), and the dots split the name into one-letter words that never meet "pd": all 18
 // Chicago P.D. searches of 15–20.10.2026 failed (B-018, v2.6.9). The joined form is one of the title's own
-// names; null when there is no run of two or more dotted letters ("J. Edgar" stays).
+// names; null when there is no run of two or more dotted letters ("J. Edgar" stays). A short joined word with nothing
+// else of the name beside it is a common word: "I.T." (2016) as "IT" took "It.2017" for itself, "D.O.A." would be
+// "DOA" (B-044, review of 21.10.2026) — so it is joined only at four letters ("SWAT") or next to another word.
 function joinedAbbrev(name) {
-    const out = (name || '').replace(/(?<![\p{L}\p{N}])(?:\p{L}\.){2,}/gu, m => m.replace(/\./g, '')).trim();
-    return out && out !== (name || '').trim() ? out : null;
+    const joins = [];
+    const out = (name || '').replace(/(?<![\p{L}\p{N}])(?:\p{L}\.){2,}/gu, m => { const w = m.replace(/\./g, ''); joins.push(w); return w; }).trim();
+    if (!out || out === (name || '').trim()) return null;
+    const rest = joins.reduce((s, w) => s.replace(w, ' '), out);
+    return joins.every(w => w.length >= 4) || /[\p{L}\p{N}]{2}/u.test(rest) ? out : null;
+}
+// "_" stands for a space in 3,9 % of archive names, and for an apostrophe before s/t/d/m/ll/re/ve: read as a space,
+// "Grey_s_Anatomy_S22E07" no longer carried "Greys" — the current season of Grey's Anatomy was „Не е намерен", and
+// "Ocean_s_Eleven", "Schindler_s_List" missed their films (B-039, review of 21.10.2026).
+function spaceUnderscores(title) {
+    return title.replace(/(\p{L})_(s|t|d|m|ll|re|ve)(?=_|\.|\s|$)/giu, "$1'$2").replace(/_+/g, ' ').replace(/\s+/g, ' ').trim();
 }
 function normalizeWords(s) {
     return ((s || '')
@@ -2237,6 +2265,18 @@ function unavailableStreams(config) {
     return streams;
 }
 
+// The film test over a set of rows. A film release that states no year, in its name or its description, is this film
+// on the name alone. When releases of the same name state years and none is this film's, the yearless one is one of
+// those namesakes: "Don't.Move.DVDRip.XviD" (the 2004 film by its age) passed for Don't Move (2026), a bare
+// "Highlander" for the 2013-dated remake (B-038, v2.6.9). The deep-search trigger asks the same question (B-046).
+function thisFilmTest(rows, ownNames, year, bgName) {
+    const statesYear = t => torrentYears(t.title).length > 0 || torrentYears(t.description || '').length > 0;
+    const named = (t, y) => ownNames.some(n => matchesMovie(t.title, n, y, bgName, t.description));
+    const dated = year ? rows.filter(statesYear) : [];
+    const namesakesOnly = dated.some(t => named(t, null)) && !dated.some(t => named(t, year));
+    return t => named(t, year) && !(namesakesOnly && !statesYear(t));
+}
+
 async function resolveStreams(type, fullId, config) {
     const [imdbId, seasonStr, episodeStr] = fullId.split(':');
     const season = seasonStr ? parseInt(seasonStr) : null;
@@ -2313,16 +2353,28 @@ async function resolveStreams(type, fullId, config) {
         if (q === meta.name && results.length >= 50) namePageFull = true;
         allTorrents = allTorrents.concat(results);
     }
-    // A full first page with nothing of this title in it: read on (B-027).
-    if (namePageFull) {
-        const spaced = t => (t.title || '').replace(/_+/g, ' ');
+    // A search that did not come back leaves the answer unfinished: a notice built on it is not cached, or the viewer
+    // keeps „Няма го" for an hour after the archive answers again (B-040, review of 21.10.2026).
+    if (upstreamFailed) config._upstreamPartial = true;
+    const spaced = t => spaceUnderscores(t.title || '');
+    // A full first page with nothing of this title in it: read on (B-027). Not for a name without a word of four
+    // letters: the archive reads every word as a substring, so "The O.C." ("the" + "o" + "c") is every row — 19 pages
+    // per request, nothing found (B-041).
+    if (namePageFull && /[\p{L}\p{N}]{4}/u.test(meta.name)) {
+        const filmTest = type === 'movie'
+            ? thisFilmTest(allTorrents.filter(isVideoCategory).map(t => ({ ...t, title: spaced(t) })), ownNames, movieYear, meta.bulgarian_name)
+            : null;
         const carries = t => isVideoCategory(t) && (type === 'movie'
-            ? ownNames.some(n => matchesMovie(spaced(t), n, movieYear, meta.bulgarian_name, t.description))
+            ? filmTest({ ...t, title: spaced(t) })
             : [...ownNames, ...altNames].some(n => matchesSeriesTitle(spaced(t), n, meta.bulgarian_name)));
         // Past the first page the rows are older: a film's must state its year. "Animals" (Други, 70 MB, no year)
         // passed for Ben Affleck's "Animals" (2026) on the exact-name rule.
         const keeps = t => carries(t) && (type !== 'movie' || torrentYears(spaced(t)).length > 0);
-        if (!allTorrents.some(carries)) allTorrents = allTorrents.concat(await deepSearch(meta.name, keeps));
+        if (!allTorrents.some(carries)) {
+            const deep = await deepSearch(meta.name, keeps, `${type}:${movieYear || ''}`);
+            if (deep.failed) config._upstreamPartial = true;
+            allTorrents = allTorrents.concat(deep.rows);
+        }
     }
     // An older season of a long show is often in neither the newest 50 rows of its name nor "<name> S04": a pack named
     // "S01-16" or "Season 01-15" answers only "<name> Season 4". Grey's Anatomy S4 and NCIS S2 were told the season is
@@ -2330,8 +2382,8 @@ async function resolveStreams(type, fullId, config) {
     // is here but no playable row of it is this episode, it is searched once more. A row with other words before the
     // name ("Melissa.and.Joey" for Joey) is dropped further down when plain rows exist, so it does not count here.
     if (type === 'series' && season && episode) {
-        const spaced = t => (t.title || '').replace(/_+/g, ' ');
         const names = [...ownNames, ...altNames];
+        const run = showRun(meta);
         const onShow = t => isVideoCategory(t) && names.some(n => matchesSeriesTitle(spaced(t), n, meta.bulgarian_name));
         const plainEpisode = t => isVideoCategory(t) && matchesEpisode(spaced(t), season, episode) !== null
             && names.some(n => matchesSeriesTitle(spaced(t), n, meta.bulgarian_name) && !namePrefix(spaced(t), headTokens(n)).length);
@@ -2341,10 +2393,13 @@ async function resolveStreams(type, fullId, config) {
             let added = 0;
             for (const x of qs) {
                 const more = await searchZamunda(x);
+                if (more === null) config._upstreamPartial = true;
                 // Only this episode's rows under the plain name. The search's other rows — other seasons, other shows
                 // — would change what the checks below conclude: "Joey Season 1" next to "Melissa.and.Joey.S02" made
-                // the latter pass as Joey S2 under a former title (the "Special Ops: Lioness" rule).
-                const mine = (more || []).filter(plainEpisode);
+                // the latter pass as Joey S2 under a former title (the "Special Ops: Lioness" rule). A "Season N" search
+                // mostly finds DVD-era packs, so a row whose years fall outside the show's run is another show of the
+                // name, not this one's season (B-045, review of 21.10.2026).
+                const mine = (more || []).filter(t => plainEpisode(t) && !outsideRun({ title: spaced(t) }, run));
                 allTorrents = allTorrents.concat(mine);
                 added += mine.length;
             }
@@ -2355,8 +2410,7 @@ async function resolveStreams(type, fullId, config) {
     // "_" stands for a space in 3,9 % of archive names ("Slow_Horses_S05E05", "The_Wire_-_Season_1_-_1_2002_UHD"),
     // but it is a word character to every season and episode pattern: "Season_2" was never read, and
     // "Some_Show_S02_Complete" passed for S1E1 (B-019, v2.6.9). Matching reads the name with spaces, and so does the row.
-    allTorrents = allTorrents.map(t => t.title && t.title.includes('_')
-        ? { ...t, title: t.title.replace(/_+/g, ' ').replace(/\s+/g, ' ').trim() } : t);
+    allTorrents = allTorrents.map(t => t.title && t.title.includes('_') ? { ...t, title: spaced(t) } : t);
 
     // Deduplicate by infohash. A row without one cannot be played, but it still shows the title IS in the
     // archive — kept aside for the row that says so (B-004).
@@ -2380,16 +2434,8 @@ async function resolveStreams(type, fullId, config) {
         console.log(`  ${nonVideo} not films or series (games, music…) left out`);
     }
     for (let i = hashless.length - 1; i >= 0; i--) if (!isVideoCategory(hashless[i])) hashless.splice(i, 1);
-    // A film release that states no year, in its name or its description, is this film on the name alone. When releases
-    // of the same name state years and none is this film's, the yearless one is one of those namesakes: "Don't.Move.
-    // DVDRip.XviD" (the 2004 film by its age) passed for Don't Move (2026), a bare "Highlander" for the 2013-dated
-    // remake (B-038, v2.6.9).
-    const statesYear = t => torrentYears(t.title).length > 0 || torrentYears(t.description || '').length > 0;
-    const dated = type === 'movie' && movieYear ? [...allTorrents, ...hashless].filter(statesYear) : [];
-    const namesakesOnly = dated.some(t => ownNames.some(n => matchesMovie(t.title, n, null, meta.bulgarian_name, t.description)))
-        && !dated.some(t => ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name, t.description)));
-    const isThisFilm = t => ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name, t.description))
-        && !(namesakesOnly && !statesYear(t));
+    // A yearless film release next to namesakes that state only other years is one of them (B-038, thisFilmTest).
+    const isThisFilm = type === 'movie' ? thisFilmTest([...allTorrents, ...hashless], ownNames, movieYear, meta.bulgarian_name) : null;
     // Is a (hashless) row this film / this episode? The same tests the playable rows go through below. A show's row
     // must carry the name with nothing before it: "Melissa.and.Joey.S02" is not Joey S2 (B-036, v2.6.9).
     const isThisTitle = t => type === 'movie'
@@ -2413,6 +2459,9 @@ async function resolveStreams(type, fullId, config) {
         const titleYear = movieYear || parseYear(meta.year || meta.releaseInfo);
         if (hashless.some(isThisTitle)) {
             logEvent('GAP', `${label} — ${hashless.length} results, all without a link [${hashless.slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
+            // An episode is "there without a link" only by a row that names its season, as below: "East Of Eden -
+            // E01-04" (the 2008 drama) said so for the 2026 series' S1E1 (B-043, review of 21.10.2026).
+            if (type === 'series' && season && episode) return noLinkEpisode() || [episodeNotFoundRow(config, meta.name, season, episode)];
             return [noLinkRow(config, meta.name, titleYear)];
         }
         logEvent('GAP', `${label} — 0 results from zamunda${nonVideo ? ` (${nonVideo} not films or series)` : ''}${hashless.length ? ` (${hashless.length} without a link, none this title)` : ''}`);
@@ -3195,7 +3244,9 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         // A list built on the fallback host's name is not kept: that name can be wrong ("The Central Warmth" for
         // Toplo), and the next request should ask the main host again (review of 20.10.2026).
         const meta = getCached(`meta:${type}:${id.split(':')[0]}`);
-        if (streams.length > 0 && !streams._noCache && !config._filesPending && !(meta && meta.fallback)) setCached(cacheKey, streams);
+        // Nor a list of notices only when a search behind it did not come back (B-040).
+        const unfinished = config._upstreamPartial && streams.every(s => s.url === NOTICE_INFO_URL);
+        if (streams.length > 0 && !streams._noCache && !unfinished && !config._filesPending && !(meta && meta.fallback)) setCached(cacheKey, streams);
         res.json({ streams });
     } catch (e) {
         console.error('Stream handler error:', e);
@@ -3467,7 +3518,7 @@ ${history.map(h => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.6.8</span>
+<span style="font-size:12px;color:var(--dim)">v2.6.9</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -3509,7 +3560,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.8', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.6.9', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Last: an error Express raises itself (a path it cannot decode, "/%zz/manifest.json") or a route throws gets a plain
 // answer. Express's own page shows the stack trace with the server's file paths (B-033, v2.6.9).
@@ -3535,6 +3586,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.6.8 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.6.9 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
