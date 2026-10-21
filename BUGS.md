@@ -5,12 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-051 — the next episode may play from another release; subtitle addons get no file name** (T-301; owner T-304):
-  every row's `bingeGroup` is "zamunda-<quality>", so after an episode from a season pack Stremio's auto-play picks
-  the first row of the same quality for the next one, often another release (another language, another pack).
-  Torrentio keeps a pack's next episode on the same torrent (`torrentio|<infohash>`) and a single-episode release on
-  the same quality and group. No row carries `behaviorHints.filename` / `videoSize`, which subtitle addons use to
-  match subtitles to the exact file — even when the addon knows the file (P2P fileIdx, the debrid file).
 - **B-052 — notice rows: raw values, wrong plural, three words for the key** (T-301 text audit; owner T-305):
   „⚠️ Няма 720p,sd" (the raw setting); „Показваме всички 1 резултата" / „Показваме 1 P2P резултата" (`server-full.js`
   BG-audio, quality and RD hints); the RD row says „ключ", the TorBox row „токен", both „Преконфигурирай…"; the
@@ -64,6 +58,12 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-051 — the next episode may play from another release; subtitle addons get no file name** (T-301; closed by T-304):
+  every row's `bingeGroup` is "zamunda-<quality>", so after an episode from a season pack Stremio's auto-play picks
+  the first row of the same quality for the next one, often another release (another language, another pack).
+  Torrentio keeps a pack's next episode on the same torrent (`torrentio|<infohash>`) and a single-episode release on
+  the same quality and group. No row carries `behaviorHints.filename` / `videoSize`, which subtitle addons use to
+  match subtitles to the exact file — even when the addon knows the file (P2P fileIdx, the debrid file). Fixed: a pack keeps the next episode on its torrent, a single-episode release on its quality, BG audio and group; rows with a known file name it for subtitle addons.
 - **B-050 — an AI-enhanced, frame-interpolated 4K is the first row** (T-301; closed by T-303): "The.Matrix.1999.2160p.DV
   .HDR10Plus.Ai-Enhanced…RIFE.4.16.lite-60fps-DirtyHippie" tops The Matrix (live, 21.10): the parser marks "AI.Upscale"
   and "UPSCALED" as upscaled (−400) but not "Ai-Enhanced" or a RIFE interpolation. 5 of the 15 297 cached rows (The

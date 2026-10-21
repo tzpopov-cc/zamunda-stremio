@@ -1425,7 +1425,7 @@ async function resolveFileIdx(infohash, season, episode, title = '', film = null
         : pickEpisodeFile(files, season, episode, packSeasons(title, season));
     if (!pick) return null;
     console.log(`  📁 fileIdx ${pick.idx} → ${pick.name}`);
-    return pick.idx;
+    return pick;
 }
 
 // The pack's file list is known, its files name other episodes of this season, and none this one: "Stranger Things
@@ -1445,8 +1445,8 @@ function packLacksEpisode(infohash, season, episode, title) {
 // land in the store for the next request. Returns true when everything finished in time.
 async function resolvePacksWithin(packs, season, episode, ms, film = null) {
     const work = mapLimit(packs, 5, async (t) => {
-        const idx = await resolveFileIdx(t._infohash, season, episode, t.title, film);
-        if (idx !== null) t._resolvedFileIdx = idx;
+        const pick = await resolveFileIdx(t._infohash, season, episode, t.title, film);
+        if (pick) { t._resolvedFileIdx = pick.idx; t._file = pick; }
         else if (season && packLacksEpisode(t._infohash, season, episode, t.title)) t._lacksEpisode = true;
     }).catch(() => {});   // never throws today; a late rejection must not become an unhandled one
     let timer;
@@ -1676,7 +1676,7 @@ async function checkAndResolve(magnet, rdToken, want, title, matchType) {
         if (info.status === 'downloaded' && info.links?.length > 0) {
             const ur = await axios.post(`${RD_API}/unrestrict/link`,
                 new URLSearchParams({ link: info.links[0] }), { headers, timeout: 8000 });
-            return { url: ur.data.download };
+            return { url: ur.data.download, file: { name: ur.data.filename, size: ur.data.filesize } };
         }
 
         if (info.status !== 'waiting_files_selection' || !info.files) {
@@ -1709,7 +1709,7 @@ async function checkAndResolve(magnet, rdToken, want, title, matchType) {
             if (poll.data.status === 'downloaded' && poll.data.links?.length > 0) {
                 const ur = await axios.post(`${RD_API}/unrestrict/link`,
                     new URLSearchParams({ link: poll.data.links[0] }), { headers, timeout: 8000 });
-                return { url: ur.data.download };
+                return { url: ur.data.download, file: { name: ur.data.filename || target.path, size: ur.data.filesize || target.bytes } };
             }
             if (poll.data.status === 'downloading' || poll.data.status === 'queued') {
                 await axios.delete(`${RD_API}/torrents/delete/${torrentId}`, { headers }).catch(() => {});
@@ -2804,7 +2804,10 @@ async function resolveStreams(type, fullId, config) {
             const c = cached.get(t._infohash);
             if (!c) return false;
             const files = (c.files || []).map(f => ({ id: f.id, name: f.name || f.short_name || '', size: f.size || 0 }));
-            return !files.length || !!chooseDebridFile(files, want, t.title, t._matchType);
+            if (!files.length) return true;
+            const pick = chooseDebridFile(files, want, t.title, t._matchType);
+            if (pick) t._file = pick;
+            return !!pick;
         });
         const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         const dropped = filtered.filter(t => cached.has(t._infohash)).length - playable.length;
@@ -2839,8 +2842,9 @@ async function resolveStreams(type, fullId, config) {
         const refused = {};          // every refusal, "403 permission_denied" -> count, for the log line
         const tasks = filtered.map((torrent) => async () => {
             if (accountProblem) return { torrent, url: null };
-            const { url, refusal } = await checkAndResolve(torrent.link, config.rdtoken, want, torrent.title, torrent._matchType);
+            const { url, file, refusal } = await checkAndResolve(torrent.link, config.rdtoken, want, torrent.title, torrent._matchType);
             if (url) console.log(`  ✅ ${torrent._quality.tag} ${torrent.title.substring(0, 50)}`);
+            if (url && file) torrent._file = file;
             if (refusal) {
                 const why = `${refusal.status} ${refusal.error || refusal.code || ''}`.trim();
                 refused[why] = (refused[why] || 0) + 1;
@@ -3016,6 +3020,18 @@ function sizeLabel(size) {
     return m ? `${m[1]} ${m[2].toUpperCase()}` : (size || '?');
 }
 
+// Stremio's auto-play of the next episode takes the first row with the same `bingeGroup`. With the quality alone it
+// left a season pack for whatever 1080p row came first — another release, another language. A pack keeps its next
+// episode on the same torrent and a single-episode release on its quality, BG audio and release group, as Torrentio
+// does (B-051, v2.7.0). A film has no next episode and keeps the plain quality group.
+function bingeGroup(torrent, q) {
+    const pack = torrent._matchType === 'season' || torrent._matchType === 'fallback';
+    if (pack && torrent._infohash) return `zamunda|${torrent._infohash}`;
+    if (!torrent._matchType) return `zamunda-${q.key}`;
+    const group = String(analyse(torrent).releaseGroup || '').toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+    return `zamunda|${q.key}|${isBgAudio(torrent) ? 'bg' : ''}|${group}`;
+}
+
 function buildStream(torrent, url, mode) {
     const q = torrent._quality;
     const extras = torrent._extras || [];
@@ -3063,10 +3079,17 @@ function buildStream(torrent, url, mode) {
         name: `${namePrefix}\nZamunda ${qualityLine}`,
         title: titleLines.join('\n'),
         behaviorHints: {
-            bingeGroup: `zamunda-${q.key}`,
+            bingeGroup: bingeGroup(torrent, q),
             notWebReady: true
         }
     };
+    // The file this row plays, when it is known (the P2P file index, the debrid file): subtitle addons match their
+    // subtitles to its name and size (Stremio's stream docs: "highly recommended" with a `url`) (B-051, v2.7.0).
+    const file = torrent._file;
+    if (file && file.name) {
+        stream.behaviorHints.filename = String(file.name).split('/').pop();
+        if (file.size > 0) stream.behaviorHints.videoSize = Number(file.size);
+    }
 
     if (url) {
         stream.url = url;
