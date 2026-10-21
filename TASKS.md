@@ -84,3 +84,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       Bulgarian (B-054).
 - [x] **T-308** A dead end asks Cinemeta's other host and searches again when its name or year differs (B-047,
       B-055).
+- [x] **T-309** A show of the same name from other years is not offered: a release's own years against the asked
+      season's air years (B-025).
+- [ ] **T-310** The dead end reads seasons only from real season marks, and a show whose name only films carry is
+      „Няма го в архива" (B-056).

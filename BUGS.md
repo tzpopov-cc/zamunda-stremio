@@ -5,6 +5,11 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
+- **B-056 — a release group read as a season in the notice** (found by the T-309 replay, v2.6.9 too; owner
+  T-310): Furious (2026) S1E1 and S2E3 say „Няма сезон N — В архива има: S00". The S00 is "HS0", the release group
+  at the end of three Fast & Furious films ("Fast.And.Furious.2009.BRRip.XviD.DUAL-HS0"): the dead end reads every
+  "S" + digits as a season. "DTS5.1" would read as S05 the same way. And the rows carrying "Furious" are all films,
+  so the show is not in the archive at all — the answer should say that (the archive gets no new torrents).
 - **B-037 — an anime whose archive name joins its hyphenated words is called missing** (deferred — the fix alone
   offers a wrong file). Found by the T-201 bug hunt pass 4: Mushi-Shi S1E11 → „Няма го в архива"; the archive has
   "[YSAnime] Mushishi [BDRip H.264 1920x1080 AAC]" (14,17 GB) and "[RyuKo]Mushishi" (8,10 GB). Kitsu's romaji name
@@ -12,19 +17,23 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   scratch copy (one-word names allowed when they are the show's own words joined): S1E1 gets both packs, S2E3
   "Mushishi S2", but S1E11 gets "[GFotaku&EasternSpirit] Mushishi 2 Special (11-12)" — season 2's specials read as
   season 1's episodes 11–12 (the "2" after the name is not read as a season). Needs that read first.
-- **B-025 — a later series of the same name is offered for the earlier one** (no owner yet — needs a check
-  first). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
+- **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
+  answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
+  176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
+
+## Closed
+- **B-025 — a later series of the same name is offered for the earlier one** (closed by T-309). Found by the T-208 check: "Avatar.The.Last.Airbender.2024.S01" (the live-action series) is offered for
   the animated Avatar: The Last Airbender (2005–2008) S1E1. The year in the name is outside the show's run, but a
   revival filed under the old show (Twin Peaks S03 2017 under 1990–1991) would read the same way, so it is not
   folded into T-208. Same kind: "Death Note - 01 (2015 Drama Series)" (the live-action drama) offered for the
   2006 anime S1E1 (T-208 replay). The T-221 review: MacGyver (1985) S1E1 is offered "MacGyver.2016.S01E01.HDTV.1080p
   .x264.BGAudio-4PLAY", MacGyver (2016) S1E7 the 1985 "MacGyver s01" XviD pack. The "<name> Season N" search already
   drops a row whose years fall outside the show's run (B-045).
-- **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
-  answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
-  176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
-
-## Closed
+  Fixed by T-309: a release whose own years (before its season mark, never the show's own name) fit neither the
+  asked season's air years from Cinemeta (±1) nor the show's first year is left out — MacGyver (1985) S1E1 7 → 5
+  rows, One Piece (1999) loses the 2023 live action, Death Note gets its anime packs, Furious (2026) loses
+  "2.Fast.2.Furious.2003"; MacGyver (2016), Doctor Who 2005, Fargo 2014 S3, Twin Peaks 2017 S3, 1923 keep theirs.
+  The "MacGyver s01" XviD pack (no year) stays for both MacGyvers — nothing in its name says which.
 - **B-047 — Cinemeta's main host names a film differently from its releases** (no owner yet — found by the T-221
   replay, v2.6.8 too): tt6195094 is "Incident in a Ghostland" on v3-cinemeta and "Ghostland" on cinemeta-live
   (21.10.2026); the archive has "Ghostland.2018.720p.BluRay.x264.AC3-HUD" and "Ghostland.2018.BRRip.XViD.AC3-HUD",

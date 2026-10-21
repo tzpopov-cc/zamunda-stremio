@@ -363,6 +363,19 @@ const META_TTL = 24 * 60 * 60 * 1000;
 const META_FALLBACK_TTL = 30 * 60 * 1000;
 const CINEMETA_TIMEOUT = { [CINEMETA_API]: 2500, [CINEMETA_FALLBACK]: 5000 };
 
+// The years each season aired, from Cinemeta's episode list — { 1: [1985, 1986], 2: [1986, 1987] } — kept with the
+// name instead of the list itself (B-025, v2.7.0).
+function seasonYears(videos) {
+    const out = {};
+    for (const v of videos || []) {
+        const y = parseInt(String(v.released || '').slice(0, 4));
+        if (!v.season || !(y > 1900)) continue;
+        const r = out[v.season] || (out[v.season] = [y, y]);
+        r[0] = Math.min(r[0], y); r[1] = Math.max(r[1], y);
+    }
+    return out;
+}
+
 async function getMetadata(type, imdbId) {
     const key = `meta:${type}:${imdbId}`;
     const cached = getCached(key);
@@ -374,7 +387,8 @@ async function getMetadata(type, imdbId) {
             // Only cache usable metadata — caching a nameless meta poisons the key for the full TTL
             if (!meta || !meta.name) return meta || null;
             const slim = { name: meta.name, bulgarian_name: meta.bulgarian_name, year: meta.year, releaseInfo: meta.releaseInfo,
-                genres: meta.genres || meta.genre || [], country: meta.country || '', fallback: base !== CINEMETA_API };
+                genres: meta.genres || meta.genre || [], country: meta.country || '', fallback: base !== CINEMETA_API,
+                seasonYears: type === 'series' ? seasonYears(meta.videos) : undefined };
             setCached(key, slim, base === CINEMETA_API ? META_TTL : META_FALLBACK_TTL);
             return slim;
         } catch (e) {
@@ -2215,6 +2229,30 @@ function outsideRun(t, run) {
 // films (documentaries aside — series live there too) or Blu-ray discs, or its years are outside the show's run.
 // "Carrie.2013.1080p.BluRay" and "Carrie.BDRip.XviD-WAR" (Филми) were 21 rows for the series Carrie (2026) S1E1,
 // "Below.2002" for Below (2026) (B-024).
+// A release whose stated years fit neither the asked season's air years (±1, or a span reaching them) nor the show's
+// first year (uploaders write either) belongs to another show of the same name: "MacGyver.2016.S01E01" was offered
+// for MacGyver (1985) S1E1, the live-action "Avatar.The.Last.Airbender.2024.S01" for the 2005 cartoon, "Death Note -
+// 01 (2015 Drama Series)" for the 2006 anime (B-025, v2.7.0). A revival filed under the old show keeps its rows —
+// its season aired in the year it states. No year in the name, or no air years from Cinemeta: kept, as before.
+// Only the years the release states for itself count: with a season or episode mark, those before it (after it
+// comes the episode's title — "Quantum.Leap.S01E01.Genesis.September.13.1956"), and never a year that is the
+// show's own name ("1923.S01E01" for 1923, aired 2022).
+function statedYears(title, meta) {
+    const s = String(title || '');
+    const mark = s.search(/(?:^|[^\p{L}\p{N}])(?:s\d{1,2}(?:[ ._-]?e\d{1,3})?|season[ ._-]?\d|сезон[ ._-]?\d|\d{1,2}x\d{2,3})(?![\p{L}\p{N}])/iu);
+    const own = torrentYears(meta.name || '');
+    return torrentYears(mark >= 0 ? s.slice(0, mark) : s).filter(y => !own.includes(y));
+}
+function anotherShowsYears(t, meta, season) {
+    const sy = meta.seasonYears && meta.seasonYears[season];
+    if (!sy) return false;
+    const years = statedYears(t.title, meta);
+    if (!years.length) return false;
+    if (Math.min(...years) <= sy[1] + 1 && Math.max(...years) >= sy[0] - 1) return false;
+    const run = showRun(meta);
+    return !(run && years.some(y => Math.abs(y - run[0]) <= 1));
+}
+
 function looksLikeFilm(t, run) {
     const cat = (t.category || '').toLowerCase();
     return (cat.startsWith('филми') && !cat.includes('документ')) || cat.startsWith('blu-ray') || outsideRun(t, run);
@@ -2298,7 +2336,8 @@ async function otherHostMetadata(type, imdbId, meta) {
             const res = await axios.get(`${CINEMETA_FALLBACK}/${type}/${imdbId}.json`, { timeout: 2500 });
             const m = res.data && res.data.meta;
             other = m && m.name ? { name: m.name, bulgarian_name: m.bulgarian_name, year: m.year, releaseInfo: m.releaseInfo,
-                genres: m.genres || m.genre || [], country: m.country || '', fallback: true } : false;
+                genres: m.genres || m.genre || [], country: m.country || '', fallback: true,
+                seasonYears: type === 'series' ? seasonYears(m.videos) : undefined } : false;
         } catch (e) {
             console.error(`Cinemeta error via ${new URL(CINEMETA_FALLBACK).host} (other name):`, e.message);
             return null;
@@ -2569,9 +2608,11 @@ async function resolveWithMeta(type, fullId, config, meta) {
         // "Avatar: The Last Airbender (Complete) (2005-2008)") (B-024).
         const run = showRun(meta);
         const filmPack = t => !hasSeasonInfo(t.title) && ((t.category || '').toLowerCase().startsWith('blu-ray') || outsideRun(t, run));
-        const matched = allTorrents.map(t => ({
+        const matchedAny = allTorrents.map(t => ({
             ...t, _matchType: matchesEpisode(t.title, season, episode)
         })).filter(t => t._matchType !== null && !(t._matchType === 'season' && filmPack(t)));
+        const matched = matchedAny.filter(t => !anotherShowsYears(t, meta, season));
+        if (matched.length < matchedAny.length) console.log(`  ${matchedAny.length - matched.length} of another show's years left out (season ${season} aired ${meta.seasonYears[season].join('–')})`);
         console.log(`  ${matched.length} match S${season}E${episode}`);
 
         if (matched.length > 0) {
