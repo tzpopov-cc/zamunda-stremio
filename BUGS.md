@@ -33,6 +33,14 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-049 — sizes written two ways** (T-301; closed by T-302): the row shows the archive's string as it is — "25.59 GB"
+  next to "4.31GB" (15 297 cached rows: 8 382 "N.N GB", 5 175 "N.N MB", 1 333 "N.NGB", 385 "N.NMB"). Fixed: "number unit" on every row.
+- **B-048 — every Zamunda row says "Zelka"** (T-301, v2.6.9 and before; closed by T-302): the archive writes its source
+  as "z" for Zamunda, "arenabg" and "zelka", and `buildStream` maps "z" to "Zelka". Proof: in the 15 297 cached rows
+  "z" holds ids 946–802 180, "arenabg" 802 184–845 163, "zelka" 845 174–853 782 — the archive's own counts are
+  zamunda 396 421, arena 42 989, zelka 8 613 (`/api/stats`), and the two ranges match the last two exactly. So 11 391
+  of 15 297 rows (74 %) carry the wrong site in Stremio: all 9 rows of The Matrix say "⚙️ Zelka". The dashboard
+  already maps "z" to zamunda (`ARCHIVE_SOURCES`). ArenaBG shows as "Arenabg". Fixed: "z" → Zamunda, "arenabg" → ArenaBG.
 - **B-039 — "Grey_s_Anatomy" no longer passes for Grey's Anatomy** (found by the T-221 review, a T-203 regression,
   closed by T-221): T-203 turns every "_" into a space before matching, and `normalizeWords`, which folded "Grey_s"
   into "greys", never sees the underscore. Grey's Anatomy S22E02, E03, E07 (the current season; "Grey_s_Anatomy_

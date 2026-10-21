@@ -65,3 +65,11 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       and none is the film's (B-038).
 - [x] **T-221** End of stage 2: fresh-context review → fixes → full replay vs v2.6.8 (0 lost) → v2.6.9 (version
       strings + changelog + RUNBOOK) → deploy with backup → live checks → push.
+
+## Stage 3 — polish (owner, 21.10.2026: „lets polish the addon and make it proper")
+
+- [ ] **T-301** Polish pass (read-only on live): the live log since v2.6.9, every stream and notice row as the viewer
+      sees it (bg and en), the ranking of the first rows, the config page on a phone and a computer, the manifest,
+      the README; measure B-047. Findings → `BUGS.md` → tasks T-302…
+- [x] **T-302** The row's info line tells the truth and reads one way: source "z" is Zamunda, "arenabg" ArenaBG
+      (B-048); a size is always "number unit" (B-049).

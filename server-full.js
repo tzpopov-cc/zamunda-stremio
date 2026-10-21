@@ -3002,13 +3002,24 @@ function dropDeadP2P(torrents) {
     return kept;
 }
 
+// The archive's source codes. "z" is Zamunda, not Zelka: its ids run 946–802 180, ArenaBG's 802 184–845 163 and
+// Zelka's 845 174–853 782, matching the archive's own counts (zamunda 396 421, arena 42 989, zelka 8 613) — until
+// v2.6.9 three rows in four said "Zelka" (B-048).
+const SOURCE_LABEL = { z: 'Zamunda', zamunda: 'Zamunda', arenabg: 'ArenaBG', zelka: 'Zelka' };
+// The archive writes "4.31GB" as often as "4.31 GB"; the row shows one form (B-049). Display only — sorting and
+// the size limit read the archive's string through parseSize.
+function sizeLabel(size) {
+    const m = String(size || '').match(/^\s*(\d+(?:\.\d+)?)\s*([KMGT]B)\s*$/i);
+    return m ? `${m[1]} ${m[2].toUpperCase()}` : (size || '?');
+}
+
 function buildStream(torrent, url, mode) {
     const q = torrent._quality;
     const extras = torrent._extras || [];
     const rawSrc = (torrent.source || '').toLowerCase();
-    const src = rawSrc === 'z' ? 'Zelka' : rawSrc.charAt(0).toUpperCase() + rawSrc.slice(1);
+    const src = SOURCE_LABEL[rawSrc] || rawSrc.charAt(0).toUpperCase() + rawSrc.slice(1);
     const bg = isBgAudio(torrent);
-    const sizeStr = torrent.size || '?';
+    const sizeStr = sizeLabel(torrent.size);
 
     // NAME field (left side in Stremio) — resolution + HDR flavour only, so it stays
     // readable on a TV. The rest moves to the format line below.

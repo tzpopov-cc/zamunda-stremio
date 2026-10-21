@@ -8,6 +8,13 @@ and `git log` — not the recollection.
 After the log review of 20.10.2026 (docker logs 15–20.10, 12 937 searches — findings in `BUGS.md`):
 „fix them all brother - i want you to apply the loop system we are using to fix bugs and improve the app."
 
+## Stage 3 (owner, 21.10.2026)
+
+„work it out brother, lets polish the addon and make it proper" — after v2.6.9 went live. Stage 3 = T-301: a
+polish pass over everything a viewer sees (stream rows, notices, ranking, the config page, the manifest, the
+README) and the live log since v2.6.9, plus the open bugs that can be measured (B-047, B-025, B-037). Findings →
+`BUGS.md` → tasks T-302…; same rules and same stage end (review, replay, version, deploy with backup, push).
+
 ## Decisions
 
 1. **Deploy:** by me, at the end of each stage (T-107, then T-2xx end), only after the replay shows
@@ -76,3 +83,4 @@ After the log review of 20.10.2026 (docker logs 15–20.10, 12 937 searches — 
 - 21.10.2026: T-220 ✅ — a film release without a year is not taken for the film when releases of the same name state years and none is the film's (B-038): Don't Move (2026) → „Няма го в архива"; Carrie, Shrek, The Godfather keep their yearless rows. Pass-4/5 answers: 141/142 identical; replay 387: identical. Next: T-201 pass 6 (full) on the post-T-220 tree.
 - 21.10.2026: T-201 ✅ pass 6 (full, post-T-220) — nothing new: replay census 148 info rows each searched again, 36 fresh live ids, RD stub 6 kinds (0 errors, 0 leaks, 0 empty), config page 7 200 links, live numbers all right. The hunt ends. Next T-221 (stage end: review, replay vs v2.6.8, v2.6.9, deploy).
 - 21.10.2026: T-221 ✅ — stage 2 ends. Review (8 findings: B-039…B-046, all fixed; the worst, "Grey_s_Anatomy" no longer matching, a T-203 regression no replay id covered), replay vs v2.6.8: 0 right rows lost, 91 wrong rows gone, 33 gained; v2.6.9 committed (925a92a) and deployed 01:33 UTC with backup (files, image :2.6.8, data copy verified); live checks all right, stats kept (1 009 users); pushed. Open: B-047 (Cinemeta's two names), B-037, B-025, B-008. No stage 3 tasks yet — the loop stops here.
+- 21.10.2026: stage 3 opened (owner: „lets polish the addon and make it proper"); T-301 polish pass running. T-302 ✅ — the row's source and size: "z" is Zamunda (1 221 of 1 585 replay rows said Zelka), ArenaBG spelled right, one size form (B-048, B-049); replay: only the info line changes.
