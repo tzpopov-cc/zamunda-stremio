@@ -267,10 +267,10 @@ wrong or missing answer:
   105 GB, was "4K") — it shows "?" unless a fetched file list says; DVD5/DVD9/DVDR/DivX/TVRip/PDTV and 594p/576p/
   480p read as SD.
 - **What the viewer is told.** Every dead end with a known reason has a row (non-video rows leave before
-  matching; „Не е намерен" for "no row carries the show name"). „Само кеширани" with nothing cached says so and how
+  matching; „Няма епизод N" (until v2.7.0 „Не е намерен") for "no row carries the show name"). „Само кеширани" with nothing cached says so and how
   to see the P2P releases. An episode the archive has only without an infohash gets „Без връзка в архива" naming
   the season and episode (The Simpsons S9) — only for a row under the plain name that states its season, also when
-  every result is linkless; otherwise „Не е намерен".
+  every result is linkless; otherwise „Няма епизод N".
 - **Links.** A v2.0.0 link's `rdmode=all` is "debrid + P2P" again. A config segment with a broken "%" gets a plain
   400 ("bad config link" / "bad play link" / "bad request"); the last Express error handler logs only the status
   and the error's name — no stack trace, no file paths, no token.

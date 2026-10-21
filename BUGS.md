@@ -5,11 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-052 — notice rows: raw values, wrong plural, three words for the key** (T-301 text audit; owner T-305):
-  „⚠️ Няма 720p,sd" (the raw setting); „Показваме всички 1 резултата" / „Показваме 1 P2P резултата" (`server-full.js`
-  BG-audio, quality and RD hints); the RD row says „ключ", the TorBox row „токен", both „Преконфигурирай…"; the
-  source-down row is named only „⚠️ Zamunda BG"; „ℹ️ Не е намерен" beside „ℹ️ Няма епизод N" for the same kind of
-  answer; ⚠️ on information rows (no BG audio, no quality) and ℹ️ on others; EN "Only titles with a similar name are."
 - **B-053 — the config page: a broken line, a doubled box, English words, faint text** (T-301 text audit; owner
   T-306): changelog `data-bg="Секция „Благодарности" за хората…"` — the straight quote ends the attribute, so the
   line shows „Секция „Благодарности" only; the numbers box twice (top and above the support box); „Streaming метод",
@@ -58,6 +53,11 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-052 — notice rows: raw values, wrong plural, three words for the key** (T-301 text audit; closed by T-305):
+  „⚠️ Няма 720p,sd" (the raw setting); „Показваме всички 1 резултата" / „Показваме 1 P2P резултата" (`server-full.js`
+  BG-audio, quality and RD hints); the RD row says „ключ", the TorBox row „токен", both „Преконфигурирай…"; the
+  source-down row is named only „⚠️ Zamunda BG"; „ℹ️ Не е намерен" beside „ℹ️ Няма епизод N" for the same kind of
+  answer; ⚠️ on information rows (no BG audio, no quality) and ℹ️ on others; EN "Only titles with a similar name are." Fixed: plain names, right number forms, „ключ" for both, ℹ️ for information.
 - **B-051 — the next episode may play from another release; subtitle addons get no file name** (T-301; closed by T-304):
   every row's `bingeGroup` is "zamunda-<quality>", so after an episode from a season pack Stremio's auto-play picks
   the first row of the same quality for the next one, often another release (another language, another pack).

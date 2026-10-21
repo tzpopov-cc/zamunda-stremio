@@ -1729,7 +1729,7 @@ async function checkAndResolve(magnet, rdToken, want, title, matchType) {
 function rdNotice(kind, config, p2pCount) {
     const bg = (config.lang || 'bg') === 'bg';
     const why = {
-        token: ['Real-Debrid ключът е изтекъл или е невалиден.\nПреконфигурирай добавката с нов ключ.',
+        token: ['Real-Debrid ключът е изтекъл или е невалиден.\nНастрой добавката наново с нов ключ.',
             'Real-Debrid token expired or invalid.\nReconfigure the addon with a new token.'],
         premium: ['Real-Debrid отказа: профилът няма активен Premium или е заключен.\nПровери абонамента си в real-debrid.com.',
             'Real-Debrid refused: the account has no active Premium or is locked.\nCheck your subscription at real-debrid.com.'],
@@ -1742,7 +1742,8 @@ function rdNotice(kind, config, p2pCount) {
         ip: ['Real-Debrid не приема заявки от сървъра на добавката.\nПроблемът е при добавката, не в профила ти.',
             'Real-Debrid does not accept requests from the addon\'s server.\nThe problem is on the addon\'s side, not your account.'],
     }[kind];
-    const tail = p2pCount ? (bg ? `\nПоказваме ${p2pCount} P2P резултата.` : `\nShowing ${p2pCount} P2P results.`) : '';
+    const tail = p2pCount ? (bg ? `\nПоказваме ${p2pCount} P2P ${p2pCount === 1 ? 'резултат' : 'резултата'}.`
+        : `\nShowing ${p2pCount} P2P ${p2pCount === 1 ? 'result' : 'results'}.`) : '';
     return {
         name: bg ? `⚠️ Real-Debrid грешка\nZamunda BG` : `⚠️ Real-Debrid error\nZamunda BG`,
         title: (bg ? why[0] : why[1]) + tail,
@@ -2258,10 +2259,10 @@ function matchesMovie(title, name, year, bgName, description) {
 function unavailableStreams(config) {
     const bg = (config.lang || 'bg') === 'bg';
     const streams = [{
-        name: '⚠️ Zamunda BG',
+        name: bg ? '⚠️ Архивът не отговаря\nZamunda BG' : '⚠️ Archive not responding\nZamunda BG',
         title: bg
-            ? 'Източникът не отговаря — проблемът не е в добавката.\nСтатус: zamunda-stremio.tzkppv.com'
-            : 'The torrent source is not responding — this is not an addon fault.\nStatus: zamunda-stremio.tzkppv.com',
+            ? 'Архивът с торенти не отговаря — проблемът не е в добавката.\nСтатус: zamunda-stremio.tzkppv.com'
+            : 'The torrent archive is not responding — this is not an addon fault.\nStatus: zamunda-stremio.tzkppv.com',
         url: NOTICE_DOWN_URL
     }];
     streams._noCache = true;   // array property: not serialised into the JSON response
@@ -2628,7 +2629,7 @@ async function resolveStreams(type, fullId, config) {
                 name: bgLang ? 'ℹ️ Няма го в архива\nZamunda BG' : 'ℹ️ Not in the archive\nZamunda BG',
                 title: bgLang
                     ? `„${meta.name}“${movieYear ? ` (${movieYear})` : ''} го няма в архива.\nИма само заглавия с подобно име.`
-                    : `"${meta.name}"${movieYear ? ` (${movieYear})` : ''} is not in the archive.\nOnly titles with a similar name are.`,
+                    : `"${meta.name}"${movieYear ? ` (${movieYear})` : ''} is not in the archive.\nThe archive only has titles with a similar name.`,
                 url: NOTICE_INFO_URL,
             }];
         }
@@ -2756,20 +2757,27 @@ async function resolveStreams(type, fullId, config) {
 
     // BG audio fallback hint — prepended to results when bgaudio filter found no BG tracks
     const hintBg = (config.lang || 'bg') === 'bg';
+    // Information rows, not errors: ℹ️ like every other row about what the archive has (⚠️ is for a service
+    // that failed), plain words for the setting and the right number form (B-052, v2.7.0).
+    const showingAll = n => hintBg
+        ? (n === 1 ? 'Показваме единствения резултат.' : `Показваме всички ${n} резултата.`)
+        : (n === 1 ? 'Showing the only result instead.' : `Showing all ${n} results instead.`);
     const bgHint = config._bgFallback ? [{
-        name: hintBg ? `⚠️ Няма БГ аудио\nZamunda BG` : `⚠️ No BG audio\nZamunda BG`,
+        name: hintBg ? `ℹ️ Няма БГ аудио\nZamunda BG` : `ℹ️ No BG audio\nZamunda BG`,
         title: hintBg
-            ? `Няма торенти с БГ аудио.\nПоказваме всички ${filtered.length} резултата.`
-            : `Nothing with Bulgarian audio.\nShowing all ${filtered.length} results instead.`,
+            ? `Няма торенти с БГ аудио.\n${showingAll(filtered.length)}`
+            : `Nothing with Bulgarian audio.\n${showingAll(filtered.length)}`,
         url: NOTICE_INFO_URL
     }] : [];
 
     // Quality fallback hint — prepended to results when quality filter found no matching quality
+    const chosenQuality = String(config.quality || '').split(',').map(q => q.trim().toLowerCase()).filter(Boolean)
+        .map(q => (q === 'sd' || q === '4k') ? q.toUpperCase() : q).join(', ');
     const qualHint = config._qualityFallback ? [{
-        name: `⚠️ ${hintBg ? 'Няма' : 'No'} ${config.quality}\nZamunda BG`,
+        name: hintBg ? `ℹ️ Няма това качество\nZamunda BG` : `ℹ️ No such quality\nZamunda BG`,
         title: hintBg
-            ? `Няма торенти в избраното качество.\nПоказваме всички ${filtered.length} резултата.`
-            : `Nothing in the quality you chose.\nShowing all ${filtered.length} results instead.`,
+            ? `Няма торенти в избраното качество (${chosenQuality}).\n${showingAll(filtered.length)}`
+            : `Nothing in the quality you chose (${chosenQuality}).\n${showingAll(filtered.length)}`,
         url: NOTICE_INFO_URL
     }] : [];
 
@@ -2787,7 +2795,7 @@ async function resolveStreams(type, fullId, config) {
             const tbAuthHint = [{
                 name: config.lang === 'bg' ? `⚠️ TorBox грешка\nZamunda BG` : `⚠️ TorBox error\nZamunda BG`,
                 title: config.lang === 'bg'
-                    ? `TorBox токенът е изтекъл или невалиден.\nПреконфигурирай добавката с нов токен.`
+                    ? `TorBox ключът е изтекъл или е невалиден.\nНастрой добавката наново с нов ключ.`
                     : `TorBox token expired or invalid.\nReconfigure the addon with a new token.`,
                 url: NOTICE_INFO_URL
             }];
@@ -2973,7 +2981,7 @@ function noSeasonRow(config, season, seasons) {
 function episodeNotFoundRow(config, name, season, episode) {
     const bg = (config.lang || 'bg') === 'bg';
     return {
-        name: bg ? 'ℹ️ Не е намерен\nZamunda BG' : 'ℹ️ Not found\nZamunda BG',
+        name: bg ? `ℹ️ Няма епизод ${episode}\nZamunda BG` : `ℹ️ No episode ${episode}\nZamunda BG`,
         title: bg
             ? `Сезон ${season}, епизод ${episode} на „${name}“ не е намерен в архива.`
             : `Season ${season}, episode ${episode} of "${name}" was not found in the archive.`,

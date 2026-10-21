@@ -76,7 +76,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 - [x] **T-303** An AI-enhanced or frame-interpolated release ranks as an upscale and says so on its row (B-050).
 - [x] **T-304** The next episode stays on the same pack or release (`bingeGroup`), and a row whose file is known
       tells subtitle addons its file name and size (B-051).
-- [ ] **T-305** Notice rows: plain words for the setting, right plurals, one word for the key, a name that says what
+- [x] **T-305** Notice rows: plain words for the setting, right plurals, one word for the key, a name that says what
       happened, one emoji per kind (B-052).
 - [ ] **T-306** The config page: the broken changelog line, one numbers box, Bulgarian words, the key wording,
       TorBox timing, readable grey, a line that the archive gets no new torrents (B-053).
