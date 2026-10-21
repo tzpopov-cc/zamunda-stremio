@@ -5,11 +5,6 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-036 — a season the archive has only without a link is called missing** (owner: T-219). Found by the T-201 bug
-  hunt pass 4: The Simpsons S9 — the only season-9 releases are "The Simpsons season 1-18 complete" and "Simpsons
-  Seasons 00-19", both without an infohash; the viewer is told „Няма сезон 9" (the season is not in the archive)
-  instead of „Без връзка в архива" (B-004's row). The same for Grey's Anatomy S04 ("Greys.Anatomy.S04.DVDRip", no
-  infohash) until B-034 surfaced the playable pack.
 - **B-037 — an anime whose archive name joins its hyphenated words is called missing** (deferred — the fix alone
   offers a wrong file). Found by the T-201 bug hunt pass 4: Mushi-Shi S1E11 → „Няма го в архива"; the archive has
   "[YSAnime] Mushishi [BDRip H.264 1920x1080 AAC]" (14,17 GB) and "[RyuKo]Mushishi" (8,10 GB). Kitsu's romaji name
@@ -28,6 +23,11 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-036 — a season the archive has only without a link is called missing** (found by the T-201 bug hunt pass 4,
+  closed by T-219): The Simpsons S9 — the only season-9 releases are "The Simpsons season 1-18 complete" and "Simpsons
+  Seasons 00-19", both without an infohash; the viewer is told „Няма сезон 9" (the season is not in the archive)
+  instead of „Без връзка в архива" (B-004's row). The same for Grey's Anatomy S04 ("Greys.Anatomy.S04.DVDRip", no
+  infohash) until B-034 surfaced the playable pack.
 - **B-034 — an older season of a long show is called missing when its only pack is a multi-season one** (found by the T-201
   bug hunt pass 4, live searches 20.10 21:01 – 21.10 ~02:00 UTC, closed by T-218): the season is looked
   for as "<name>" (the newest 50 rows) and "<name> S04"; a pack named "S01-16" or "Season 01-15" is in neither.

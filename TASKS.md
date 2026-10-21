@@ -59,5 +59,5 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 - [x] **T-217** A season list ("Season 1,2,3", "Seasons 1 & 2") is a pack of every season in it (B-035).
 - [x] **T-218** A show in the archive with nothing playable for the asked episode is searched once more as "<name>
       Season N" before the season or episode is called missing (B-034).
-- [ ] **T-219** A season or episode the archive has only without an infohash gets „Без връзка в архива", not „Няма
+- [x] **T-219** A season or episode the archive has only without an infohash gets „Без връзка в архива", not „Няма
       сезон N" (B-036).

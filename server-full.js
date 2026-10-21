@@ -2380,10 +2380,18 @@ async function resolveStreams(type, fullId, config) {
         console.log(`  ${nonVideo} not films or series (games, music…) left out`);
     }
     for (let i = hashless.length - 1; i >= 0; i--) if (!isVideoCategory(hashless[i])) hashless.splice(i, 1);
-    // Is a (hashless) row this film / this episode? The same tests the playable rows go through below.
+    // Is a (hashless) row this film / this episode? The same tests the playable rows go through below. A show's row
+    // must carry the name with nothing before it: "Melissa.and.Joey.S02" is not Joey S2 (B-036, v2.6.9).
     const isThisTitle = t => type === 'movie'
         ? ownNames.some(n => matchesMovie(t.title, n, movieYear, meta.bulgarian_name, t.description))
-        : ownNames.some(n => matchesSeriesTitle(t.title, n, meta.bulgarian_name)) && (!season || matchesEpisode(t.title, season, episode) !== null);
+        : ownNames.some(n => matchesSeriesTitle(t.title, n, meta.bulgarian_name) && !namePrefix(t.title, headTokens(n)).length)
+            && (!season || matchesEpisode(t.title, season, episode) !== null);
+    // The episode is in the archive, but only without an infohash ("The Simpsons season 1-18 complete", "Nip Tuck -
+    // Season 2"): saying the season or the episode is missing would be untrue (B-036, v2.6.9). The row must name its
+    // season: "East Of Eden - E01-04" (the 2008 Korean drama, episodes only) passed as the 2026 series' S1E1.
+    const noLinkOf = t => isThisTitle(t) && hasSeasonInfo(t.title);
+    const noLinkEpisode = () => type === 'series' && season && episode && hashless.some(noLinkOf)
+        ? [noLinkRow(config, meta.name, null, season, episode)] : null;
 
     if (allTorrents.length === 0) {
         // An unreachable source is not the same as "this title has no torrents". Returning []
@@ -2426,6 +2434,8 @@ async function resolveStreams(type, fullId, config) {
             // not in the archive (B-020).
             const underAltName = allTorrents.some(t => nameOf(t) && byAltOnly(t));
             logEvent('GAP', `${label} — ${beforeCount} results, none carry the show name${underAltName ? ' (only under another name)' : ''} [${allTorrents.slice(0, 3).map(t => t.title).join(' | ')}]`);
+            const noLink = noLinkEpisode();
+            if (noLink) return noLink;
             return [underAltName ? episodeNotFoundRow(config, meta.name, season, episode) : notInArchiveRow(config, meta.name, parseYear(meta.year || meta.releaseInfo))];
         }
         if (onShow.length < beforeCount) {
@@ -2483,6 +2493,11 @@ async function resolveStreams(type, fullId, config) {
                 console.log(`  ${fallback.length} fallback (no season/ep info)`);
                 allTorrents = fallback;
             } else {
+                const noLink = noLinkEpisode();
+                if (noLink) {
+                    logEvent('GAP', `${label} — ${beforeCount} torrents, S${season}E${episode} only without a link [${hashless.filter(noLinkOf).slice(0, 3).map(t => t.title.substring(0, 60)).join(' | ')}]`);
+                    return noLink;
+                }
                 // Categorize WHY no episodes matched — helps debugging
                 const seasons = new Set();
                 const episodes = new Set();
@@ -2901,9 +2916,12 @@ function episodeNotFoundRow(config, name, season, episode) {
 }
 // The archive lists the release but without its infohash ("btih:&dn=…" — 7,9 % of its rows, old SD/DVD films
 // of source z): it cannot be played, and saying "not in the archive" would be untrue (B-004).
-function noLinkRow(config, name, year) {
+// With a season it names the episode: the show's other seasons may well play (B-036, v2.6.9).
+function noLinkRow(config, name, year, season, episode) {
     const bg = (config.lang || 'bg') === 'bg';
-    const what = bg ? `„${name}“${year ? ` (${year})` : ''}` : `"${name}"${year ? ` (${year})` : ''}`;
+    const what = season
+        ? (bg ? `Сезон ${season}, епизод ${episode} на „${name}“` : `Season ${season}, episode ${episode} of "${name}"`)
+        : bg ? `„${name}“${year ? ` (${year})` : ''}` : `"${name}"${year ? ` (${year})` : ''}`;
     return {
         name: bg ? 'ℹ️ Без връзка в архива\nZamunda BG' : 'ℹ️ No link in the archive\nZamunda BG',
         title: bg
