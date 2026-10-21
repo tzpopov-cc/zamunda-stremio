@@ -25,7 +25,7 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
 
 ## Stage 2 — bug hunt
 
-- [ ] **T-201** Process pass with real data (read-only on live): P2P film, P2P series and packs, RD, TorBox
+- [x] **T-201** Process pass with real data (read-only on live): P2P film, P2P series and packs, RD, TorBox
       (list and play), config page and install link, dashboard and landing numbers. New findings → `BUGS.md`
       → tasks T-202… A full pass with no new finding ends the loop with a report.
 
@@ -63,3 +63,5 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       сезон N" (B-036).
 - [x] **T-220** A film release without a year is not taken for the film when releases of the same name state years
       and none is the film's (B-038).
+- [ ] **T-221** End of stage 2: fresh-context review → fixes → full replay vs v2.6.8 (0 lost) → v2.6.9 (version
+      strings + changelog + RUNBOOK) → deploy with backup → live checks → push.
