@@ -5,13 +5,48 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
+- **B-050 — an AI-enhanced, frame-interpolated 4K is the first row** (T-301; owner T-303): "The.Matrix.1999.2160p.DV
+  .HDR10Plus.Ai-Enhanced…RIFE.4.16.lite-60fps-DirtyHippie" tops The Matrix (live, 21.10): the parser marks "AI.Upscale"
+  and "UPSCALED" as upscaled (−400) but not "Ai-Enhanced" or a RIFE interpolation. 7 of the 15 297 cached rows (The
+  Matrix trilogy, Thor, The Fast and the Furious, all DirtyHippie), each the first row of a famous film.
+- **B-051 — the next episode may play from another release; subtitle addons get no file name** (T-301; owner T-304):
+  every row's `bingeGroup` is "zamunda-<quality>", so after an episode from a season pack Stremio's auto-play picks
+  the first row of the same quality for the next one, often another release (another language, another pack).
+  Torrentio keeps a pack's next episode on the same torrent (`torrentio|<infohash>`) and a single-episode release on
+  the same quality and group. No row carries `behaviorHints.filename` / `videoSize`, which subtitle addons use to
+  match subtitles to the exact file — even when the addon knows the file (P2P fileIdx, the debrid file).
+- **B-052 — notice rows: raw values, wrong plural, three words for the key** (T-301 text audit; owner T-305):
+  „⚠️ Няма 720p,sd" (the raw setting); „Показваме всички 1 резултата" / „Показваме 1 P2P резултата" (`server-full.js`
+  BG-audio, quality and RD hints); the RD row says „ключ", the TorBox row „токен", both „Преконфигурирай…"; the
+  source-down row is named only „⚠️ Zamunda BG"; „ℹ️ Не е намерен" beside „ℹ️ Няма епизод N" for the same kind of
+  answer; ⚠️ on information rows (no BG audio, no quality) and ℹ️ on others; EN "Only titles with a similar name are."
+- **B-053 — the config page: a broken line, a doubled box, English words, faint text** (T-301 text audit; owner
+  T-306): changelog `data-bg="Секция „Благодарности" за хората…"` — the straight quote ends the attribute, so the
+  line shows „Секция „Благодарности" only; the numbers box twice (top and above the support box); „Streaming метод",
+  „Зависи от seeders", „Stremio addon", „като backup" (and 🌐 where the rows show 🔗), „Копирай URL", „Real-Debrid API
+  Token" without Bulgarian, alerts „Въведи Real-Debrid token" / „Token-ът изглежда невалиден"; TorBox „~2-3 сек."
+  (measured 0,4–0,8 s on live, 19 lists); the muted grey (#444 on black, about 2:1) on the „Промени" tab, the hints
+  and the disclaimer; the page never says the archive gets no new torrents; the outage banner says „настройвате"
+  (the page says „ти" everywhere else); „Лимит на размер" / „Без лимит" where the rows say „ограничение"; changelog
+  words „Fallback", „Fix", „timeout", „miss-ове", „Анимe" (Latin e), internal notes (logs, Upstash) and mixed badges.
+- **B-054 — manifest and README say less or older things** (T-301; owner T-307): the manifest says „от Zamunda
+  архива (RD режим)" and uses the 512 px icon as its background picture; the README says "450K+" (448 023), lists
+  the Upstash variables (gone), its self-host steps skip `config.html` (the server stops at start) and its Bulgarian
+  is half English („torrent streaming", „Addon-ът", „hash-ове", „resolve-ва").
+- **B-055 — Cinemeta's main host gives a wrong year** (found with B-047, T-301; owner T-308): tt2888046 Ip Man 3 is
+  2025 on v3-cinemeta (released 2025-10-05, a re-release) and 2015 on cinemeta-live; the archive has three
+  "Ip.Man.3.2015…" rows and the film test (±1 year) rejects them all → „Няма го в архива". Of 291 measured ids the
+  year differs on 10, 8 of them by one year (tolerated), The Witch by two (T-214), Ip Man 3 by ten.
+
 - **B-047 — Cinemeta's main host names a film differently from its releases** (no owner yet — found by the T-221
   replay, v2.6.8 too): tt6195094 is "Incident in a Ghostland" on v3-cinemeta and "Ghostland" on cinemeta-live
   (21.10.2026); the archive has "Ghostland.2018.720p.BluRay.x264.AC3-HUD" and "Ghostland.2018.BRRip.XViD.AC3-HUD",
   and reads every word as a substring, so the main name finds 0 rows → „Няма го в архива". The replay pair got
   different names for the same id (one server's main host timed out), which is the only difference of the T-221
-  fixes over the 387 ids. Needs a measurement first: how many titles the two hosts name differently, and whether
-  the other name finds the release.
+  fixes over the 387 ids. Measured (T-301, 21.10.2026, 291 ids of the replay set and the live log, both hosts answered
+  all): 19 names differ, 7 only in case, punctuation or an accent; the archive finds the title under the main name
+  only for 1 (Toplo), under the other only for 2 (Ghostland, Besa: Blood Oath → "Besa"), under both for 10, under
+  neither for 6. Searching the other name as well, on a dead end only, gains the 2 and loses none. Owner T-308.
 
 - **B-037 — an anime whose archive name joins its hyphenated words is called missing** (deferred — the fix alone
   offers a wrong file). Found by the T-201 bug hunt pass 4: Mushi-Shi S1E11 → „Няма го в архива"; the archive has
