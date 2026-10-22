@@ -102,5 +102,5 @@ Found by the check of the live v2.7.0 (B-061…B-063) plus the two open old ones
 - [x] **T-403** A dead end after the main Cinemeta host timed out asks the main host once more (B-063).
 - [x] **T-404** Mushishi: an anime whose archive name joins its hyphenated words (B-037) — only if the season-2
       specials can be told apart.
-- [ ] **T-405** End of stage 4: fresh-context review → fixes → full replay vs v2.7.0 → v2.7.1 → push → deploy with
+- [x] **T-405** End of stage 4: fresh-context review → fixes → full replay vs v2.7.0 → v2.7.1 → push → deploy with
       backup → live checks.
