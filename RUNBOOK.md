@@ -98,7 +98,7 @@ position in the WHOLE torrent (subtitles and .nfo included), which is what Strem
 server expects as `fileIdx`. It is a cache, not data to protect: delete it and it rebuilds on demand.
 
 Rollback: the server keeps `server.js.bak-<version>-predeploy` + `config.html.bak-<version>-predeploy`
-for every deploy (2.6.2 – 2.6.9 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
+for every deploy (2.6.2 – 2.7.0 are there, plus `*.bak-2.6.5-early` and `*.bak-2.6.6-early`) — copy a pair back and `docker compose up -d --build`.
 Since 2.6.7 a deploy also tags the old image (`docker tag zamunda-stremio-zamunda-stremio:latest …:<old version>`)
 and copies `data/` to `data.bak-<old version>-predeploy` while the container is STOPPED (build first, then
 `stop` → `cp -a` → `up -d`: about 3 s down, and the copy is consistent).
@@ -507,6 +507,24 @@ Stage 3 of the bug loop (owner: „lets polish the addon and make it proper"; T-
 Tested: replay 391 ids vs v2.6.9 — 12 rows lost, every one another show's (MacGyver 2016, Avatar 2024, One Piece 2023,
 Death Note 2015, Undercover 2016, 2 Fast 2 Furious for Furious 2026); 17 gained (Ip Man 3 ×12, Ghostland ×2, Death
 Note anime packs ×2, Besa S2E3); 0 errors. The fresh-context review found 4 more (B-057…B-060), fixed.
+
+### Namesakes, the other Cinemeta host and anime joined names (v2.7.1)
+
+- **Dead rows of the right show.** `dropDeadP2P` hides 0-seeder rows once one row is alive. For a series episode where
+  no live row states a year fitting the season (`_yearFit`) but dead ones do, and Cinemeta's search
+  (`catalog/series/top/search=<name>`) lists another series of the same name (`namesakeSeriesExists`, cached 24 h),
+  up to 3 of those dead rows stay (`_keepDead`, 👥 0 on the row). Log: „N dead rows of the right show kept". MacGyver
+  (2016) S1E1 is the case; the replay cannot show it (dead tracker) — check with real trackers (a local copy against
+  the real archive via `home-proxy/server.js` on loopback).
+- **Season list of „Няма сезон N"** stops at Cinemeta's last season for the show (`seasonsOfTheShow`).
+- **Other Cinemeta host.** The dead-end retry now also runs when the first name came from cinemeta-live (main host
+  timed out): it asks the main host (cache key `meta3:`; `meta2:` is the other direction); a failed lookup is kept
+  2 min. A film's other name is searched without shared words when both years agree (Besa → "Solemn Promise").
+- **Anime joined names.** Kitsu's one-word name is used when it is the show's own words run together (Mushi-Shi →
+  Mushishi); "<name> 2 Special (11-12)" / OVA / OAD with bracketed episodes reads as season 2.
+
+Tested: replay 391 ids vs v2.7.0 — identical (0 lost, 0 gained); 47 episodes with real trackers, old vs new — only the
+MacGyver (2016) case differs; Besa with a stub main host that answers the first call after 3,2 s.
 
 ## Deploying a new version
 

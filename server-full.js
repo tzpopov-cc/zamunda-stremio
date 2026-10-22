@@ -323,7 +323,7 @@ function buildManifest(config) {
     // stretched the 512 px icon there (B-054, v2.7.0).
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.7.0',
+        version: '2.7.1',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от архива на Zamunda, ArenaBG и Zelka (режим ${mode})`
@@ -426,7 +426,9 @@ async function animeAltNames(imdbId, meta) {
             if (!english.includes(want) || !year || !start || Math.abs(start - year) > 1) continue;
             for (const n of [a.titles?.en_jp, ...(a.abbreviatedTitles || [])]) {
                 if (!n || !/^[\x20-\x7E]+$/.test(n)) continue;       // romaji, not kana or kanji
-                if (nameTokens(n).length < 2) continue;                // "KuroBas" alone would match anything
+                // "KuroBas" alone would match anything — unless it is the show's own words run together: Cinemeta's
+                // "Mushi-Shi" is Kitsu's "Mushishi", which is how the archive writes it (B-037, v2.7.1).
+                if (nameTokens(n).length < 2 && normalizeTitle(n).replace(/ /g, '') !== want.replace(/ /g, '')) continue;
                 if (normalizeTitle(n) !== want) names.push(n);
             }
         }
@@ -1162,6 +1164,9 @@ function declaredSeasons(t) {
     // The same bare season number with the year(s) between it and the episode: "Taxi Driver 3 2025-2026 E08" is
     // season 3, episode 8 — read as season 1 it was offered for S1E8 (B-019, v2.6.9).
     for (const m of t.matchAll(/(?<=[A-Z'\])]\s)([1-9]\d?)\s+(?:19|20)\d{2}(?:\s*[-–]\s*(?:19|20)\d{2})?(?=\s+E\d)/g)) add(m, m[1]);
+    // "Mushishi 2 Special (11-12)": the number right after the title, then Special / OVA, is the season; the
+    // numbers in brackets are its episodes (B-037, v2.7.1). Read as no season it was season 1's episodes 11–12.
+    for (const m of t.matchAll(/(?<=[A-Z'\])]\s)([1-9]\d?)\s+(?:SPECIAL|OVA|OAD)[\s._-]*\((?=\d)/g)) add(m, m[1]);
     return out;
 }
 
@@ -2328,23 +2333,28 @@ function thisFilmTest(rows, ownNames, year, bgName) {
 // (more than one off) it gives differently is searched as well. Measured over 291 ids (21.10.2026): 19 names differ,
 // the other name finds 2 titles the main one misses (Ghostland, Besa), and a dead end only is retried, so the one the
 // main name alone finds (Toplo) is never lost. Its answer is kept a day; a failed lookup is not kept.
+// When the first answer came from cinemeta-live because the main host timed out (`meta.fallback`), the other host is
+// the main one: Besa (2009) is "Solemn Promise" there and "Besa" on the main host, which the archive knows (B-063,
+// v2.7.1). Each direction has its own cache key.
 async function otherHostMetadata(type, imdbId, meta) {
-    const key = `meta2:${type}:${imdbId}`;
+    const base = meta.fallback ? CINEMETA_API : CINEMETA_FALLBACK;
+    const key = `${meta.fallback ? 'meta3' : 'meta2'}:${type}:${imdbId}`;
     let other = getCached(key);
     if (other === null) {
         try {
-            const res = await axios.get(`${CINEMETA_FALLBACK}/${type}/${imdbId}.json`, { timeout: 2500 });
+            const res = await axios.get(`${base}/${type}/${imdbId}.json`, { timeout: 2500 });
             const m = res.data && res.data.meta;
             other = m && m.name ? { name: m.name, bulgarian_name: m.bulgarian_name, year: m.year, releaseInfo: m.releaseInfo,
-                genres: m.genres || m.genre || [], country: m.country || '', fallback: true,
+                genres: m.genres || m.genre || [], country: m.country || '', fallback: !meta.fallback,
                 seasonYears: type === 'series' ? seasonYears(m.videos) : undefined } : false;
         } catch (e) {
-            console.error(`Cinemeta error via ${new URL(CINEMETA_FALLBACK).host} (other name):`, e.message);
+            console.error(`Cinemeta error via ${new URL(base).host} (other name):`, e.message);
+            setCached(key, 'failed', 2 * 60 * 1000);   // a host that is down must not add 2,5 s to every dead end
             return null;
         }
         setCached(key, other, META_TTL);
     }
-    if (!other) return null;
+    if (!other || other === 'failed') return null;
     const y1 = parseYear(meta.year || meta.releaseInfo), y2 = parseYear(other.year || other.releaseInfo);
     const sameYear = !y1 || !y2 || Math.abs(y1 - y2) <= 1;
     const w1 = normalizeTitle(meta.name).split(' '), w2 = normalizeTitle(other.name).split(' ');
@@ -2352,6 +2362,10 @@ async function otherHostMetadata(type, imdbId, meta) {
     // Another name is searched only when one holds the other's words ("Ghostland" in "Incident in a Ghostland", "Besa"
     // in "Besa: Blood Oath"): Hotel Tehran (2026) is "The Fix" on cinemeta-live, and only the year test kept the
     // archive's "The.Fix.2024", another film, out of its list (review of 21.10.2026).
+    // A film is the exception: the film test (the year, ±1) stands between the other name and any other film, so a
+    // name with none of the words in common is searched too — Besa (2009) is "Solemn Promise" on cinemeta-live
+    // (B-063, v2.7.1). Both years must be known and agree (Hotel Tehran 2026 is "The Fix" 2024 there); a series has no such test.
+    if (type === 'movie' && y1 && y2 && sameYear) return other;
     const within = (a, b) => a.every(w => b.includes(w));
     return within(w1, w2) || within(w2, w1) ? other : null;
 }
@@ -2371,8 +2385,8 @@ async function resolveStreams(type, fullId, config) {
     const before = { ...config };
     const streams = await resolveWithMeta(type, fullId, config, meta);
     const told = rows => { if (rows._gap) logEvent('GAP', rows._gap); return rows; };
-    // A dead end by the name (B-047): only when the main host gave it — a fallback answer already is the other host.
-    if (!streams._nameMiss || meta.fallback) return told(streams);
+    // A dead end by the name (B-047): the other host is asked once, whichever host gave the first name.
+    if (!streams._nameMiss) return told(streams);
     const other = await otherHostMetadata(type, imdbId, meta);
     if (!other) return told(streams);
     const again = { ...before, _otherName: true };
@@ -2626,6 +2640,8 @@ async function resolveWithMeta(type, fullId, config, meta) {
             ...t, _matchType: matchesEpisode(t.title, season, episode)
         })).filter(t => t._matchType !== null && !(t._matchType === 'season' && filmPack(t)));
         const matched = matchedAny.filter(t => !anotherShowsYears(t, meta, season));
+        // A row that states a year fitting the season is surely this show's (B-061); the rest may be a namesake's.
+        if (meta.seasonYears && meta.seasonYears[season]) for (const t of matched) if (statedYears(t.title, meta).some(y => y >= meta.seasonYears[season][0] - 1 && y <= meta.seasonYears[season][1] + 1)) t._yearFit = true;
         if (matched.length < matchedAny.length) console.log(`  ${matchedAny.length - matched.length} of another show's years left out (season ${season} aired ${meta.seasonYears[season].join('–')})`);
         console.log(`  ${matched.length} match S${season}E${episode}`);
 
@@ -2691,8 +2707,9 @@ async function resolveWithMeta(type, fullId, config, meta) {
                 let detail = '';
                 let missRow = null;
                 if (seasons.size > 0 && !seasons.has(season)) {
-                    missRow = noSeasonRow(config, season, seasons, seasonIsNew(meta, season));
-                    detail = ` (available: ${[...seasons].sort((a, b) => a - b).map(s => `S${String(s).padStart(2, '0')}`).join(',')})`;
+                    const own = seasonsOfTheShow(meta, seasons);
+                    missRow = noSeasonRow(config, season, own, seasonIsNew(meta, season));
+                    detail = ` (available: ${[...own].sort((a, b) => a - b).map(s => `S${String(s).padStart(2, '0')}`).join(',')})`;
                 } else if (episodes.size > 0 && !episodes.has(episode)) {
                     const maxEp = Math.max(...episodes);
                     const latest = `E${String(maxEp).padStart(2, '0')}`;
@@ -2826,6 +2843,7 @@ async function resolveWithMeta(type, fullId, config, meta) {
     if (config.debrid === 'none' || config.debridmode === 'all') await attachSeeders(filtered);
 
     filtered = sortTorrents(filtered, config);
+    if (type === 'series' && season) await keepRightShowDeadRows(filtered, imdbId, meta);
 
     // Pure P2P: drop the dead rows before anything else is spent on them (file lists included),
     // and before the hint rows below count what is being shown.
@@ -3093,6 +3111,16 @@ function seasonIsNew(meta, season) {
     const y = sy ? sy[0] : parseYear(meta.year || meta.releaseInfo);
     return !!y && y >= ARCHIVE_FROZEN_YEAR;
 }
+// The seasons the archive has, without those past the show's last season on Cinemeta: they are a namesake's —
+// MacGyver (2016) has five, the archive's S06 and S07 are MacGyver (1985) (B-062, v2.7.1). Unchanged without
+// Cinemeta's seasons, or when nothing would be left.
+function seasonsOfTheShow(meta, seasons) {
+    const known = Object.keys(meta.seasonYears || {}).map(Number).filter(n => n > 0);
+    if (!known.length) return seasons;
+    const last = Math.max(...known);
+    const own = new Set([...seasons].filter(n => n <= last));
+    return own.size ? own : seasons;
+}
 // Season N is not in the archive; the seasons it has.
 function noSeasonRow(config, season, seasons, isNew) {
     const bg = (config.lang || 'bg') === 'bg';
@@ -3132,6 +3160,36 @@ function noLinkRow(config, name, year, season, episode) {
     };
 }
 
+// Another series of the same name on Cinemeta ("MacGyver" 1985 and 2016), by its search — asked only when a dead row
+// of the right show is about to be hidden, kept a day. A failed or slow search says no: the rows are hidden as before.
+async function namesakeSeriesExists(imdbId, meta) {
+    const key = `namesake:${imdbId}`;
+    const cached = getCached(key);
+    if (cached !== null) return cached;
+    try {
+        const res = await axios.get(`${CINEMETA_API.replace(/\/meta$/, '')}/catalog/series/top/search=${encodeURIComponent(meta.name)}.json`, { timeout: 2500 });
+        const own = normalizeTitle(meta.name);
+        const found = (res.data && res.data.metas || []).some(m => m.id !== imdbId && normalizeTitle(m.name || '') === own);
+        setCached(key, found, META_TTL);
+        return found;
+    } catch (e) {
+        console.error(`Cinemeta search error (namesake):`, e.message);
+        return false;
+    }
+}
+// Every live row may be another show's when none states a year that fits this season (a yearless "MacGyver s01" pack)
+// while the right show's rows do and are dead: with a namesake on Cinemeta they stay, three at most, and say 👥 0
+// (B-061, v2.7.1). `torrents` has seeder counts and is sorted by the caller's order of preference.
+async function keepRightShowDeadRows(torrents, imdbId, meta) {
+    const alive = t => typeof t._seeders === 'number' && t._seeders > 0;
+    const dead = t => typeof t._seeders === 'number' && t._seeders === 0;
+    const rightDead = torrents.filter(t => t._yearFit && dead(t));
+    if (!rightDead.length || !torrents.some(alive) || torrents.some(t => t._yearFit && alive(t))) return;
+    if (!await namesakeSeriesExists(imdbId, meta)) return;
+    for (const t of rightDead.slice(0, 3)) t._keepDead = true;
+    console.log(`  ${Math.min(3, rightDead.length)} dead rows of the right show kept: every live row may be a namesake's`);
+}
+
 // A P2P row whose swarm has no seeders will not start. Once at least one row is proven alive,
 // the dead ones only push it down the list, so drop them. If none is proven alive (or the
 // scrape failed and nothing has a count), keep everything — an unknown is not a dead torrent.
@@ -3139,7 +3197,7 @@ function dropDeadP2P(torrents) {
     const isDead = t => typeof t._seeders === 'number' && t._seeders === 0;
     const anyAlive = torrents.some(t => typeof t._seeders === 'number' && t._seeders > 0);
     if (!anyAlive) return torrents;
-    const kept = torrents.filter(t => !isDead(t));
+    const kept = torrents.filter(t => !isDead(t) || t._keepDead);
     if (kept.length < torrents.length) console.log(`  🪦 hid ${torrents.length - kept.length} P2P rows with 0 seeders`);
     return kept;
 }
@@ -3692,7 +3750,7 @@ ${history.map(h => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.7.0</span>
+<span style="font-size:12px;color:var(--dim)">v2.7.1</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -3734,7 +3792,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.7.0', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.7.1', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Last: an error Express raises itself (a path it cannot decode, "/%zz/manifest.json") or a route throws gets a plain
 // answer. Express's own page shows the stack trace with the server's file paths (B-033, v2.6.9).
@@ -3760,6 +3818,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.7.0 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.7.1 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });

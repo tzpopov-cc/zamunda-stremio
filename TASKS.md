@@ -90,3 +90,17 @@ Order of work for the bug loop (`plans/LOOP.md`). One task = one plan in `plans/
       later says the archive gets no new torrents (B-056).
 - [x] **T-311** End of stage 3: fresh-context review → fixes → full replay vs v2.6.9 (0 lost right rows) → v2.7.0 →
       push → deploy with backup → live checks.
+
+## Stage 4 — after v2.7.0 (owner, 22.10.2026: „fix everything we can please")
+
+Found by the check of the live v2.7.0 (B-061…B-063) plus the two open old ones (B-037; B-008 has no source).
+
+- [x] **T-401** A dead row of the right show is kept when every live row is a yearless row that may belong to a
+      namesake (Cinemeta lists another series of the same name) (B-061).
+- [x] **T-402** The season list in a "no season N" notice leaves out seasons Cinemeta says the show does not have
+      (B-062).
+- [x] **T-403** A dead end after the main Cinemeta host timed out asks the main host once more (B-063).
+- [x] **T-404** Mushishi: an anime whose archive name joins its hyphenated words (B-037) — only if the season-2
+      specials can be told apart.
+- [ ] **T-405** End of stage 4: fresh-context review → fixes → full replay vs v2.7.0 → v2.7.1 → push → deploy with
+      backup → live checks.

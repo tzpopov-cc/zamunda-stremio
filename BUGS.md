@@ -5,18 +5,35 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
 
 ## Open
 
-- **B-037 — an anime whose archive name joins its hyphenated words is called missing** (deferred — the fix alone
-  offers a wrong file). Found by the T-201 bug hunt pass 4: Mushi-Shi S1E11 → „Няма го в архива"; the archive has
-  "[YSAnime] Mushishi [BDRip H.264 1920x1080 AAC]" (14,17 GB) and "[RyuKo]Mushishi" (8,10 GB). Kitsu's romaji name
-  is "Mushishi", one word, and `animeAltNames` skips one-word names ("KuroBas" would match anything). Tried on a
-  scratch copy (one-word names allowed when they are the show's own words joined): S1E1 gets both packs, S2E3
-  "Mushishi S2", but S1E11 gets "[GFotaku&EasternSpirit] Mushishi 2 Special (11-12)" — season 2's specials read as
-  season 1's episodes 11–12 (the "2" after the name is not read as a season). Needs that read first.
 - **B-008 — a pack whose file list is unknown plays the biggest file** (deferred — no source). itorrents
   answers 403 for a torrent it does not have (a made-up hash → 403) — 267 times in 5 days — and timed out
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-061 — a live pack of a namesake hides the right show's episodes** (found 22.10.2026 by the post-v2.7.0 check,
+  closed by T-401): MacGyver (2016) S1E1 showed only the 1985-era "MacGyver s01" XviD pack (Zelka, no year in the
+  name); the archive's "MacGyver.2016.S01E01.HDTV.1080p.x264.BGAudio-4PLAY" (0 seeders) was hidden as dead. The
+  replay cannot see this (its tracker is dead, no row is hidden). Fixed: when no live row states a year fitting the
+  season, at least one dead row does and Cinemeta's search lists another series of the same name, up to 3 dead rows
+  of the right show stay (👥 0 on the row). MacGyver (2016) S1E1 1 → 3 rows; 39 + 8 other episodes with real trackers
+  unchanged. Review: a revival whose year fits only the show's first year does not count as fitting (fixed).
+- **B-062 — the season list of a notice counts the namesake's seasons** (found 22.10.2026, closed by T-402):
+  MacGyver (2016) S9 said „В архива има: S01,…,S07"; now S01–S05 (Cinemeta's last season for the show).
+- **B-063 — a dead end after a Cinemeta main-host timeout never asks the main host** (found 22.10.2026, closed by
+  T-403): Besa (2009) on live said „Няма го в архива" after 3,3 s — the main host timed out, cinemeta-live calls the
+  film "Solemn Promise". Reproduced with a stub main host that answers the first call after 3,2 s; now 2,9 s and the
+  film is found. A film's other name is searched without shared words when both years agree (the year test guards
+  it); a series keeps the strict rule. Review: a failed lookup is kept 2 min (a down host would cost 2,5 s per dead
+  end), and the years must agree, not only be known (fixed).
+- **B-037 — an anime whose archive name joins its hyphenated words is called missing** (closed by T-404). Found by the T-201 bug hunt pass 4: Mushi-Shi S1E11 → „Няма го в архива"; the archive has
+  "[YSAnime] Mushishi [BDRip H.264 1920x1080 AAC]" (14,17 GB) and "[RyuKo]Mushishi" (8,10 GB). Kitsu's romaji name
+  is "Mushishi", one word, and `animeAltNames` skips one-word names ("KuroBas" would match anything). Tried on a
+  scratch copy (one-word names allowed when they are the show's own words joined): S1E1 gets both packs, S2E3
+  "Mushishi S2", but S1E11 gets "[GFotaku&EasternSpirit] Mushishi 2 Special (11-12)" — season 2's specials read as
+  season 1's episodes 11–12 (the "2" after the name is not read as a season). Needs that read first.
+  Fixed by T-404 (v2.7.1): a one-word Kitsu name is allowed when it is the show's own words joined, and
+  "<name> 2 Special (11-12)" reads as season 2, episodes 11–12. Mushi-Shi S1E1/S1E11 get the two series packs, S2E11
+  gets "Mushishi S2" and the special; one title in 23 637 of the replay cache carries the new pattern.
 - **B-057 — one viewer's debrid file name on another viewer's P2P rows** (T-311 review, medium, VERIFIED, closed by
   T-311): a film's rows are the search cache's own objects (kept an hour); a Real-Debrid or TorBox request wrote its
   chosen file onto them (`_file`, new in T-304), and the next P2P request of the same film sent that name and size to
