@@ -6,6 +6,7 @@
 //   stub-ok   the real flow: addMagnet -> info -> selectFiles -> downloaded -> unrestrict; "cached" = a hash
 //             whose first hex digit is 0–7, anything else stays in magnet_conversion
 //   stub-late stub-ok for the first 2 addMagnet calls, then 429 too_many_requests (34) — a refusal mid-list
+//   stub-once stub-ok, but the FIRST addMagnet of every hash gets 429 (34) and the second passes — a pause, not a refusal (T-502)
 const http = require('http');
 
 const REFUSE = {
@@ -14,6 +15,7 @@ const REFUSE = {
     'stub-busy': [429, 'too_many_requests', 34],
 };
 const calls = {};
+const seenHash = new Set();   // stub-once: hashes already refused once
 const torrents = new Map();   // id -> { hash, name, selected }
 let seq = 0;
 
@@ -32,8 +34,12 @@ http.createServer((req, res) => {
         const p = u.pathname.replace(/^\/rest\/1\.0/, '');
         if (p === '/torrents/addMagnet') calls[token] = (calls[token] || 0) + 1;
         if (token === 'stub-late' && p === '/torrents/addMagnet' && calls[token] > 2) return send(res, 429, { error: 'too_many_requests', error_code: 34 });
+        if (token === 'stub-once' && p === '/torrents/addMagnet') {
+            const h = (((new URLSearchParams(body).get('magnet') || '').match(/btih:([a-z0-9]+)/i) || [])[1] || '').toLowerCase();
+            if (!seenHash.has(h)) { seenHash.add(h); return send(res, 429, { error: 'too_many_requests', error_code: 34 }); }
+        }
         if (REFUSE[token]) { const [s, error, error_code] = REFUSE[token]; return send(res, s, { error, error_code }); }
-        if (token !== 'stub-ok' && token !== 'stub-infr' && token !== 'stub-late') return send(res, 401, { error: 'bad_token', error_code: 8 });
+        if (token !== 'stub-ok' && token !== 'stub-infr' && token !== 'stub-late' && token !== 'stub-once') return send(res, 401, { error: 'bad_token', error_code: 8 });
 
         if (p === '/torrents/addMagnet') {
             if (token === 'stub-infr') return send(res, 503, { error: 'infringing_file', error_code: 35 });

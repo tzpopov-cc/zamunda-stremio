@@ -323,7 +323,7 @@ function buildManifest(config) {
     // stretched the 512 px icon there (B-054, v2.7.0).
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.7.1',
+        version: '2.7.2',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от архива на Zamunda, ArenaBG и Zelka (режим ${mode})`
@@ -1742,8 +1742,22 @@ async function checkAndResolve(magnet, rdToken, want, title, matchType) {
     } catch (e) {
         if (torrentId) await axios.delete(`${RD_API}/torrents/delete/${torrentId}`,
             { headers: { Authorization: `Bearer ${rdToken}` } }).catch(() => {});
-        return { url: null, refusal: rdRefusal(e) };
+        return { url: null, refusal: rdRefusal(e), beforeAdd: !torrentId };
     }
+}
+
+// "Too many requests" (429 / code 34 or 5) is a pause, not a refusal of the account: 41 of 914 RD lists (4,5 %) in
+// 72 h (22–25.10.2026) were given up on the first one and showed "Real-Debrid is limiting requests". One more try
+// after a short wait; a second 429 is the answer (B-065).
+const RD_BUSY_WAIT_MS = 1500;
+// Only a 429 on the first call (nothing was added to the viewer's account yet) is retried, and only while the list is
+// still wanted: a retry after a half-done add would leave a second torrent on the account.
+async function checkAndResolveRetry(magnet, rdToken, want, title, matchType, listAbandoned) {
+    const first = await checkAndResolve(magnet, rdToken, want, title, matchType);
+    if (first.url || !first.refusal || !first.beforeAdd || rdAccountProblem(first.refusal) !== 'busy') return first;
+    await new Promise(r => setTimeout(r, RD_BUSY_WAIT_MS));
+    if (listAbandoned && listAbandoned()) return first;
+    return checkAndResolve(magnet, rdToken, want, title, matchType);
 }
 
 // The row that tells an RD viewer why there are no RD links — the TorBox auth notice's twin (B-002).
@@ -1802,6 +1816,23 @@ async function tbCheckCached(infohashes, tbToken) {
 // account had 805 torrents in it — and each add spent a create call against TorBox's rate limit.
 // The list now needs one cache check; the add happens once, for the release actually played.
 const TB_LINK_TTL = 2 * 60 * 60 * 1000;
+
+// A TorBox account on the free plan answers the cache check but refuses every create call: "API feature not
+// available on your plan" — 88 presses of play in 72 h (22–25.10.2026) ended in a player error on a row that was
+// shown as cached (B-064). The first refusal is remembered per key for 20 min; until it expires the list says so and offers
+// P2P, and the lists already built for that key (which still carry TorBox rows) are dropped.
+const TB_FREE_TTL = 20 * 60 * 1000;   // short: while it is set no TorBox row is shown, so nobody can press play to find out they upgraded
+const TB_FREE_PLAN = /API feature not available on your plan/i;   // the exact words the live API sent (22–25.10.2026)
+const tbKeyHash = (tbToken) => crypto.createHash('md5').update(tbToken).digest('hex').substring(0, 8);
+
+function tbMarkFreePlan(tbToken) {
+    const h = tbKeyHash(tbToken);
+    setCached(`tbfree:${h}`, true, TB_FREE_TTL);
+    for (const key of [...cache.keys()]) if (key.startsWith('streams:') && key.includes(`:${h}:`)) cache.delete(key);
+}
+function tbIsFreePlan(tbToken) {
+    return !!getCached(`tbfree:${tbKeyHash(tbToken)}`);
+}
 
 function tbPlayUrl(tbToken, type, fullId, infohash) {
     const cfg = encodeURIComponent(`debrid=torbox|tbtoken=${tbToken}`);
@@ -2921,6 +2952,22 @@ async function resolveWithMeta(type, fullId, config, meta) {
         console.log(`  TorBox mode (${debridMode}): checking ${filtered.length} torrents...`);
         const startTime = Date.now();
         const infohashes = filtered.map(t => t._infohash);
+        if (tbIsFreePlan(config.tbtoken)) {
+            const bgLang = config.lang === 'bg';
+            const tbPlanHint = [{
+                name: bgLang ? `⚠️ TorBox: безплатен план\nZamunda BG` : `⚠️ TorBox: free plan\nZamunda BG`,
+                title: bgLang
+                    ? `Безплатният план на TorBox не пуска файлове през добавки.\nНужен е платен план. Дотогава ползвай P2P.`
+                    : `TorBox's free plan does not play files through addons.\nA paid plan is needed. Use P2P until then.`,
+                url: NOTICE_INFO_URL
+            }];
+            const p2pStreams = dropDeadP2P(filtered).map(t => buildStream(t, null, 'p2p'));
+            console.log(`  → TB free plan, ${p2pStreams.length} P2P fallback`);
+            logEvent('TB', `0 TB (free plan) + ${p2pStreams.length} P2P — "${meta.name}"`);
+            const out = [...hints, ...tbPlanHint, ...p2pStreams];
+            out._noCache = true;   // the key may be upgraded; the check is free, so the list is not kept
+            return out;
+        }
         const cached = await tbCheckCached(infohashes, config.tbtoken);
 
         // If TB token is expired/invalid, show warning + fall back to P2P
@@ -2983,7 +3030,7 @@ async function resolveWithMeta(type, fullId, config, meta) {
         const refused = {};          // every refusal, "403 permission_denied" -> count, for the log line
         const tasks = filtered.map((torrent) => async () => {
             if (accountProblem) return { torrent, url: null };
-            const { url, file, refusal } = await checkAndResolve(torrent.link, config.rdtoken, want, torrent.title, torrent._matchType);
+            const { url, file, refusal } = await checkAndResolveRetry(torrent.link, config.rdtoken, want, torrent.title, torrent._matchType, () => !!accountProblem);
             if (url) console.log(`  ✅ ${torrent._quality.tag} ${torrent.title.substring(0, 50)}`);
             if (url && file) torrent._file = file;
             if (refusal) {
@@ -3478,7 +3525,8 @@ app.get('/:config/stream/:type/:id.json', async (req, res) => {
         const meta = getCached(`meta:${type}:${id.split(':')[0]}`);
         // Nor a list of notices only when a search behind it did not come back (B-040).
         const unfinished = config._upstreamPartial && streams.every(s => s.url === NOTICE_INFO_URL);
-        if (streams.length > 0 && !streams._noCache && !unfinished && !config._filesPending && !(meta && meta.fallback)) setCached(cacheKey, streams);
+        const tbFreeNow = config.tbtoken && tbIsFreePlan(config.tbtoken);   // a list built before the flag was set must not be kept after it
+        if (streams.length > 0 && !streams._noCache && !unfinished && !config._filesPending && !(meta && meta.fallback) && !tbFreeNow) setCached(cacheKey, streams);
         res.json({ streams });
     } catch (e) {
         console.error('Stream handler error:', e);
@@ -3513,7 +3561,12 @@ app.get('/:config/play/tb/:type/:id/:hash', async (req, res) => {
     } catch (e) {
         const detail = e.response?.data?.detail || e.message;
         console.error('TorBox play error:', detail);
-        logEvent('ERROR', `TB play: ${detail}`);
+        if (TB_FREE_PLAN.test(String(detail))) {
+            tbMarkFreePlan(config.tbtoken);
+            logEvent('TB', 'play refused: free plan');
+        } else {
+            logEvent('ERROR', `TB play: ${detail}`);
+        }
         res.status(502).type('text/plain').send('TorBox could not provide this file');
     }
 });
@@ -3750,7 +3803,7 @@ ${history.map(h => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.7.1</span>
+<span style="font-size:12px;color:var(--dim)">v2.7.2</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -3792,7 +3845,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.7.1', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.7.2', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Last: an error Express raises itself (a path it cannot decode, "/%zz/manifest.json") or a route throws gets a plain
 // answer. Express's own page shows the stack trace with the server's file paths (B-033, v2.6.9).
@@ -3818,6 +3871,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.7.1 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.7.2 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });

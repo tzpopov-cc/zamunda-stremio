@@ -10,6 +10,19 @@ Found in the log review of 20.10.2026 (docker logs 15.10 15:13 – 20.10 15:13 U
   176 times. Without the list a P2P pack has no `fileIdx`. No other free source of `.torrent` files.
 
 ## Closed
+- **B-064 — a TorBox free-plan key is shown cached rows that cannot be played** (found 25.10.2026 by the 72 h log
+  check, closed by T-501): the cache check works on the free plan, `createtorrent` answers "API feature not available
+  on your plan" — 88 presses of play in 72 h ended in a player error. Fixed: the first such refusal is remembered per
+  key for 20 min (`tbfree:`), the lists already built for that key are dropped, and the list says „TorBox: безплатен план"
+  and offers P2P (never cached). Through the TorBox stub (`tools/replay/tb-stub.js`): old keeps 6 TB rows after the
+  failed press, new shows the note + 20 P2P; a paid key is untouched.
+- **B-065 — Real-Debrid "too many requests" ends the whole list** (found 25.10.2026, closed by T-502): 41 of 914 RD
+  lists (4,5 %) in 72 h gave up on the first 429. One more try after 1,5 s (`checkAndResolveRetry`); a second 429 is the
+  answer. RD stub `stub-once` (first add of each hash gets 429): old 0 RD + notice, new 11 RD; `stub-busy` unchanged.
+- **B-066 — known vulnerabilities in the dependencies** (found 25.10.2026 by `npm audit`, closed by T-503): 1 critical
+  (`proxy-addr`), 4 high (`axios`, `follow-redirects`, `form-data`), 1 moderate (`qs`) → `npm audit fix` + an
+  `overrides` entry for `qs` (express pins an older one): 0 left. The server builds with `npm ci` from ITS OWN
+  `package.json` + `package-lock.json`, so the deploy script must upload both (it never did).
 - **B-061 — a live pack of a namesake hides the right show's episodes** (found 22.10.2026 by the post-v2.7.0 check,
   closed by T-401): MacGyver (2016) S1E1 showed only the 1985-era "MacGyver s01" XviD pack (Zelka, no year in the
   name); the archive's "MacGyver.2016.S01E01.HDTV.1080p.x264.BGAudio-4PLAY" (0 seeders) was hidden as dead. The

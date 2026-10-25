@@ -104,3 +104,13 @@ Found by the check of the live v2.7.0 (B-061…B-063) plus the two open old ones
       specials can be told apart.
 - [x] **T-405** End of stage 4: fresh-context review → fixes → full replay vs v2.7.0 → v2.7.1 → push → deploy with
       backup → live checks.
+
+## Stage 5 — after v2.7.1 (owner, 25.10.2026: „fix them all and lets update it everywhere")
+
+Found by the check of the live v2.7.1 (72 h of logs, `npm audit`, the server's disk and updates): B-064…B-066.
+
+- [x] **T-501** A TorBox free-plan key gets a note and P2P instead of rows that fail on play (B-064).
+- [x] **T-502** Real-Debrid "too many requests" gets one more try after a short wait (B-065).
+- [x] **T-503** Dependencies updated, `npm audit` clean; the deploy uploads `package.json` + `package-lock.json` (B-066).
+- [x] **T-504** End of stage 5: fresh-context review (4 findings fixed) → replay vs v2.7.1 (391 identical) → v2.7.2 →
+      push → deploy script for the owner (backup first). Waiting for the owner: deploy, cleanup, night reboot.

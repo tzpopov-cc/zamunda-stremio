@@ -526,6 +526,29 @@ Note anime packs ×2, Besa S2E3); 0 errors. The fresh-context review found 4 mor
 Tested: replay 391 ids vs v2.7.0 — identical (0 lost, 0 gained); 47 episodes with real trackers, old vs new — only the
 MacGyver (2016) case differs; Besa with a stub main host that answers the first call after 3,2 s.
 
+### TorBox free plan, Real-Debrid pauses and the dependencies (v2.7.2)
+
+- **TorBox free plan (B-064).** The cache check works on the free plan, `createtorrent` answers "API feature not
+  available on your plan". The play handler remembers that per key for 20 min (`tbfree:<md5 8>` in the in-memory cache),
+  drops the cached lists of that key, and the TorBox list branch answers „⚠️ TorBox: безплатен план" + P2P (`_noCache`).
+  Only that exact wording sets it. Log: `TB play refused: free plan`, `0 TB (free plan) + N P2P`.
+- **Real-Debrid 429 (B-065).** `checkAndResolveRetry`: one more try after 1,5 s, only for a 429 on the first call (nothing
+  added to the viewer's account yet) and only while the list is still wanted; a second 429 ends the list as before.
+- **Dependencies (B-066).** `npm audit` is clean: `npm audit fix` plus `"overrides": {"qs": "6.16.1"}` (express pins
+  an older qs). Re-run `npm audit --omit=dev` before every deploy; the image is built with `npm ci` from the SERVER'S
+  `package.json` + `package-lock.json`, so the deploy script uploads both.
+- **Stubs.** `tools/replay/tb-stub.js` (:9914; `tb-ok`, `tb-free`) and `rd-stub.js` `stub-once` (the first add of each
+  hash gets 429). `start.sh` points TorBox at the stub. Restart `rd-stub.js` before a `stub-once` run: it remembers
+  the hashes it already refused.
+- **Server housekeeping.** Old `data.bak-*` folders (270-320 MB each) and images are removed by hand, the last three kept
+  (`~/Desktop/zamunda-cleanup.sh`). The box (`178.104.89.141`) runs 18 containers, all `unless-stopped`; a kernel reboot is
+  scheduled for 01:00 UTC (`zamunda-reboot.sh`), checked with `zamunda-after-reboot.sh`.
+
+Tested: replay 391 ids vs v2.7.1 - identical (0 lost, 0 gained); the stubs: TorBox free key old keeps 11 TB rows after a
+failed press, new shows the note + 20 P2P, a paid key unchanged; RD `stub-once` old 0 RD, new 11 RD; `stub-busy` and
+`stub-ok` unchanged. The fresh-context review found 4 real points (flag lifetime, wording, a cache race, the retry
+after a half-done add), fixed.
+
 ## Deploying a new version
 
 Full procedure is in `CLAUDE.md` (local, gitignored). The parts that bite:

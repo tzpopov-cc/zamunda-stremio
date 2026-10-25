@@ -45,7 +45,7 @@ README) and the live log since v2.6.9, plus the open bugs that can be measured (
 
 ## Waiting for the owner
 
-- (nothing)
+- v2.7.2: `~/Desktop/zamunda-deploy-272.sh`, then `zamunda-cleanup.sh`, then `zamunda-reboot.sh` (night), then `zamunda-after-reboot.sh`.
 
 ## Log
 
@@ -96,3 +96,4 @@ README) and the live log since v2.6.9, plus the open bugs that can be measured (
 - 21.10.2026: T-311 ✅ — stage 3 ends. Review (B-057…B-060: one viewer's debrid file name on others' P2P rows, the other Cinemeta name of another title, a second GAP line, three texts — all fixed), replay vs v2.6.9: 0 right rows lost, 12 wrong gone, 17 gained; v2.7.0 (changelog: every line ПОДОБРЕНИЕ, owner's request) pushed and deployed 09:54 UTC with backup (files, image :2.6.9, data copy verified); live checks all right, stats kept (1 012 users). Open: B-037, B-008. No stage 4 tasks yet — the loop stops here.
 - 22.10.2026: stage 4 (owner: „fix everything we can please") T-401…T-404 ✅ — B-061 (MacGyver 2016 dead rows), B-062, B-063 (Besa), B-037 (Mushi-Shi); B-008 stays (no source). Fresh-context review: 4 findings fixed. Replay 391 vs v2.7.0: identical. v2.7.1 committed and pushed (e0420d5). Deploy: auto mode refused the SSH deploy → script `~/Desktop/zamunda-deploy-271.sh` (backup first) waits for the owner. T-405 closes after the live checks.
 - 22.10.2026 ~14:00 UTC: v2.7.1 DEPLOYED by the owner running ~/Desktop/zamunda-deploy-271.sh (backups *.bak-2.7.0-predeploy, image :2.7.0, data.bak-2.7.0-predeploy). Live: health 2.7.1, manifest + badge 2.7.1, MacGyver 2016 S1E1 3 rows, S9 notice S01-S05, Besa 1 row, Mushi-Shi S1E11 2 rows, Matrix 10 rows; stats kept (totalUsers 1032, streamRequests 695 469); container healthy, no errors in logs. T-405 done.
+- 25.10.2026: stage 5 (owner: "fix them all and lets update it everywhere") T-501...T-504 done - B-064 TorBox free plan (note + P2P), B-065 RD 429 retry once, B-066 dependencies (npm audit 0; qs override). Review: 4 findings fixed. Replay 391 vs v2.7.1: identical. v2.7.2 committed; deploy waits for the owner (script on the Desktop).
