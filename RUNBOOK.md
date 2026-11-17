@@ -549,6 +549,31 @@ failed press, new shows the note + 20 P2P, a paid key unchanged; RD `stub-once` 
 `stub-ok` unchanged. The fresh-context review found 4 real points (flag lifetime, wording, a cache race, the retry
 after a half-done add), fixed.
 
+## v2.7.3 (2026-11-17) — request limit, impossible episodes
+
+Log review of 10–16.11: one TorBox account (dashboard tag `40f7bb`) made 68 255 of 130 871 stream requests between
+31.10 and 16.11 (78 % on 04.11) — a program walking S1E1 … S1E900 of short shows, one request every 7,5 s, each a
+new search in the archive. Three changes, all in the stream route:
+
+- **Impossible episode** (`episodePastTheEnd`): an episode number past the larger of Cinemeta's episode count and its
+  highest episode number, plus max(5, 10 %), is answered `[]` with no search. Only on the main Cinemeta host's list.
+  Logged once an hour per title (`⛔ No such episode`).
+- **Request limit** (`rateCount`): per user id, counting only requests that miss the cache. More than `RATE_SHORT`
+  (60) in 10 min or `RATE_LONG` (150) in an hour → a pause of 1 h, doubling per further pause within 24 h, 12 h at
+  most. IP-keyed users (`h:`) get double. During a pause: cached answers still served, otherwise one notice row
+  (`⏳ Твърде много заявки`). Log: `🚧 Request limit: tb 40f7bb — …`, and `[LIMIT]` in the dashboard feed.
+  Tune or switch off in `.env` (`RATE_SHORT`, `RATE_LONG`, `RATE_LIMIT=off`) + `docker compose up -d --force-recreate`.
+  The state is in memory: a restart forgives everyone.
+- **Season 0** is one cache entry per show (`tt…:0:1`): the answer never depended on the episode, but every
+  episode number was a new search (“Dynasties” 1 674× on 13.11).
+
+Counters: `streams` (the landing-page number) no longer counts the two kinds of held-back requests; they are in
+`held` (`daily[date].held`, dashboard column “Held back”). History before 17.11 is not rewritten.
+
+Tested: replay 398 ids vs v2.7.2 with the limit off — identical cold and warm; local run with the limit on: the
+62nd uncached request in 10 min gets the notice, an already opened title still plays, a second user is untouched;
+Breaking Bad S1E70 served, S1E297 empty; One Piece S1E1100 served (absolute numbering), S1E5000 empty.
+
 ## Deploying a new version
 
 Full procedure is in `CLAUDE.md` (local, gitignored). The parts that bite:

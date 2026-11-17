@@ -323,7 +323,7 @@ function buildManifest(config) {
     // stretched the 512 px icon there (B-054, v2.7.0).
     return {
         id: 'community.zamunda.bgaudio',
-        version: '2.7.2',
+        version: '2.7.3',
         name: 'Zamunda BG',
         description: config.lang === 'bg'
             ? `Филми и сериали от архива на Zamunda, ArenaBG и Zelka (режим ${mode})`
@@ -376,6 +376,29 @@ function seasonYears(videos) {
     return out;
 }
 
+// How many episodes Cinemeta lists for the show: all of them, and the highest episode number of any season
+// (v2.7.3). Kept so that a request for an episode far past the end is answered without a search.
+function episodeCounts(videos) {
+    let total = 0, top = 0;
+    for (const v of videos || []) {
+        if (v.season == null || v.episode == null) continue;
+        total++;
+        if (v.episode > top) top = v.episode;
+    }
+    return { total, top };
+}
+// An episode that cannot exist (v2.7.3). In November 2026 one client walked S1E1 … S1E900 of six-episode shows,
+// one request every 7,5 s for days — each a new search in the archive. Stremio only offers the episodes a
+// catalogue lists, so a number past everything Cinemeta knows is not a viewer. The bar is the larger of the
+// show's episode count and its highest episode number (absolute anime numbering stays inside it), plus a margin
+// for a catalogue that is a few episodes ahead of Cinemeta. A list from the fallback host, or none, decides nothing.
+function episodePastTheEnd(meta, episode) {
+    const c = meta && !meta.fallback && meta.eps;
+    if (!c || !c.total || !(episode > 0)) return 0;
+    const known = Math.max(c.total, c.top);
+    return episode > known + Math.max(5, Math.ceil(known * 0.1)) ? known : 0;
+}
+
 async function getMetadata(type, imdbId) {
     const key = `meta:${type}:${imdbId}`;
     const cached = getCached(key);
@@ -388,7 +411,8 @@ async function getMetadata(type, imdbId) {
             if (!meta || !meta.name) return meta || null;
             const slim = { name: meta.name, bulgarian_name: meta.bulgarian_name, year: meta.year, releaseInfo: meta.releaseInfo,
                 genres: meta.genres || meta.genre || [], country: meta.country || '', fallback: base !== CINEMETA_API,
-                seasonYears: type === 'series' ? seasonYears(meta.videos) : undefined };
+                seasonYears: type === 'series' ? seasonYears(meta.videos) : undefined,
+                eps: type === 'series' ? episodeCounts(meta.videos) : undefined };
             setCached(key, slim, base === CINEMETA_API ? META_TTL : META_FALLBACK_TTL);
             return slim;
         } catch (e) {
@@ -3499,25 +3523,114 @@ app.get('/:config/manifest.json', (req, res) => {
     res.json(buildManifest(config));
 });
 
+// ── Request limit per user (v2.7.3) ──
+// From 31.10 to 16.11.2026 one TorBox account made 68 255 of 130 871 stream requests: a program walking episode
+// numbers, one request every 7,5 s, for hours. A viewer opens a title, picks an episode, maybe a few more — the
+// busiest real accounts make 50–400 requests in a whole DAY. So the limit sits far above anything a person does
+// and only counts requests that cost a search (answers from the cache are free and never counted):
+//   more than RATE_SHORT in 10 minutes, or more than RATE_LONG in an hour  →  a pause.
+// The pause is 1 h the first time and doubles for each further one within a day (2 h, 4 h … 12 h at most), so a
+// program that keeps going gets a few hundred answers a day instead of thousands. During a pause the user still
+// gets everything that is in the cache, and otherwise ONE row that says what happened and when it ends — never
+// an empty list, in case a person ever lands here. Users known only by IP (old P2P installs) get double the
+// room: one address can be a whole household or a mobile network. RATE_LIMIT=off turns it all off.
+const RATE_ON = (process.env.RATE_LIMIT || 'on') !== 'off';
+const RATE_SHORT = parseInt(process.env.RATE_SHORT) || 60;
+const RATE_LONG = parseInt(process.env.RATE_LONG) || 150;
+const RATE_SHORT_MS = 10 * 60 * 1000, RATE_LONG_MS = 60 * 60 * 1000;
+const RATE_PAUSE_MS = 60 * 60 * 1000, RATE_PAUSE_MAX_MS = 12 * 60 * 60 * 1000, RATE_STRIKE_KEEP_MS = 24 * 60 * 60 * 1000;
+const rate = new Map();   // user id -> { hits: [ms, …] within the hour, until: ms, strikes, struckAt: ms }
+// Is the user paused? Returns the minutes left, or 0. Does not count anything.
+function ratePaused(id, now = Date.now()) {
+    const r = RATE_ON && rate.get(id);
+    return r && r.until > now ? Math.ceil((r.until - now) / 60000) : 0;
+}
+// Count one request that costs a search. Returns the minutes of the pause it starts, or 0.
+function rateCount(id, now = Date.now()) {
+    if (!RATE_ON) return 0;
+    let r = rate.get(id);
+    if (!r) rate.set(id, r = { hits: [], until: 0, strikes: 0, struckAt: 0 });
+    while (r.hits.length && now - r.hits[0] >= RATE_LONG_MS) r.hits.shift();
+    r.hits.push(now);
+    const room = id.startsWith('h:') ? 2 : 1;
+    let short = 0;
+    for (let i = r.hits.length - 1; i >= 0 && now - r.hits[i] < RATE_SHORT_MS; i--) short++;
+    if (short <= RATE_SHORT * room && r.hits.length <= RATE_LONG * room) return 0;
+    if (now - r.struckAt >= RATE_STRIKE_KEEP_MS) r.strikes = 0;
+    const pause = Math.min(RATE_PAUSE_MS * 2 ** r.strikes, RATE_PAUSE_MAX_MS);
+    const seen = `${short} in 10 min, ${r.hits.length} in 1 h`;
+    r.strikes++; r.struckAt = now; r.until = now + pause; r.hits = [];
+    const mins = Math.round(pause / 60000);
+    console.log(`🚧 Request limit: ${userKind(id)} ${reqTag(id)} — ${seen} — paused ${mins} min (pause ${r.strikes} today)`);
+    logEvent('LIMIT', `${userKind(id)} ${reqTag(id)} — ${seen} — paused ${mins} min (pause ${r.strikes} today)`);
+    return mins;
+}
+function rateSweep(now = Date.now()) {
+    for (const [id, r] of rate) {
+        while (r.hits.length && now - r.hits[0] >= RATE_LONG_MS) r.hits.shift();
+        if (!r.hits.length && r.until <= now && now - r.struckAt >= RATE_STRIKE_KEEP_MS) rate.delete(id);
+    }
+}
+setInterval(rateSweep, 10 * 60 * 1000).unref();
+function rateLimitRow(config, mins) {
+    const bg = (config.lang || 'bg') === 'bg';
+    const when = mins >= 90 ? (bg ? `около ${Math.round(mins / 60)} часа` : `about ${Math.round(mins / 60)} hours`) : (bg ? `${mins} мин` : `${mins} min`);
+    return {
+        name: bg ? `⏳ Твърде много заявки\nZamunda BG` : `⏳ Too many requests\nZamunda BG`,
+        title: bg
+            ? `От този профил дойдоха необичайно много заявки за кратко време.\nТърсенето е спряно за ${when}. Вече отваряните заглавия работят.`
+            : `Unusually many requests came from this profile in a short time.\nSearch is paused for ${when}. Titles opened before still work.`,
+        url: NOTICE_INFO_URL,
+    };
+}
+
 // Streams
 app.get('/:config/stream/:type/:id.json', async (req, res) => {
-    incr('streams'); incrDaily('streams');
     try {
         const config = configOf(req);
-        if (!config) return res.json({ streams: [] });
-        trackRequest(trackUser(req, config));
-        const { type, id } = req.params;
-        if (!['movie', 'series'].includes(type)) return res.json({ streams: [] });
+        if (!config) { incr('streams'); incrDaily('streams'); return res.json({ streams: [] }); }
+        const userId = trackUser(req, config);
+        trackRequest(userId);
+        const { type } = req.params;
+        let { id } = req.params;
+        // `streams` (the number on the landing page) counts what was asked by viewers: everything except the
+        // requests held back by the limit and the ones for episodes that cannot exist (counted as `held`).
+        const served = () => { incr('streams'); incrDaily('streams'); };
+        if (!['movie', 'series'].includes(type)) { served(); return res.json({ streams: [] }); }
         // The manifest asks for IMDb ids only, but some clients send kitsu:/tmdb: ids anyway.
         // Cinemeta cannot name them, so answer at once instead of spending a lookup on a 404.
-        if (!/^tt\d+$/.test(id.split(':')[0])) return res.json({ streams: [] });
+        if (!/^tt\d+$/.test(id.split(':')[0])) { served(); return res.json({ streams: [] }); }
+        // Season 0 (specials) is answered with the show's whole list whatever the episode, so every episode of
+        // it is one and the same answer — and one cache entry, not a new search per number (v2.7.3).
+        const idParts = id.split(':');
+        if (type === 'series' && idParts.length === 3 && parseInt(idParts[1]) === 0) id = `${idParts[0]}:0:1`;
 
         const cacheKey = `streams:${configFingerprint(config)}:${id}`;
         const cached = getCached(cacheKey);
         if (cached) {
+            served();
             console.log(`⚡ Cache hit: ${id}`);
             return res.json({ streams: cached });
         }
+
+        const pausedFor = ratePaused(userId) || rateCount(userId);
+        if (pausedFor) {
+            incr('held'); incrDaily('held');
+            return res.json({ streams: [rateLimitRow(config, pausedFor)], cacheMaxAge: 0 });
+        }
+        if (type === 'series' && idParts.length === 3) {
+            const epMeta = await getMetadata(type, idParts[0]);
+            const known = episodePastTheEnd(epMeta, parseInt(req.params.id.split(':')[2]));
+            if (known) {
+                incr('held'); incrDaily('held');
+                if (!getCached(`pastend:${idParts[0]}`)) {
+                    setCached(`pastend:${idParts[0]}`, true);
+                    console.log(`⛔ No such episode: "${epMeta.name}" ${req.params.id} — Cinemeta lists ${known}; answered empty (logged once an hour per title)`);
+                }
+                return res.json({ streams: [] });
+            }
+        }
+        served();
 
         const streams = await resolveStreams(type, id, config);
         // A list built on the fallback host's name is not kept: that name can be wrong ("The Central Warmth" for
@@ -3658,6 +3771,7 @@ app.get('/dashboard', adminAuth, async (req, res) => {
             dayStreams: getDailyCount(d.date, 'streams'),
             dayViews: getDailyCount(d.date, 'pageViews'),
             dayUsers: getDailyCount(d.date, 'users'),
+            dayHeld: getDailyCount(d.date, 'held'),
         }));
         dailyCounts.sort((a, b) => b.date.localeCompare(a.date));
         history.push(...dailyCounts);
@@ -3785,12 +3899,13 @@ ${history.length > 0 ? `
 <div class="log-box" style="max-height:30vh">
 <table style="width:100%;border-collapse:collapse;font-size:12px">
 <tr style="color:var(--gold);text-align:left;border-bottom:1px solid var(--border)">
-<th style="padding:6px 4px">Date</th><th>Active</th><th>Streams</th><th>Busiest user</th><th>Page Views</th><th>Magnets</th><th>New magnets</th></tr>
+<th style="padding:6px 4px">Date</th><th>Active</th><th>Streams</th><th title="Not counted in Streams: over the request limit, or an episode that cannot exist">Held back</th><th>Busiest user</th><th>Page Views</th><th>Magnets</th><th>New magnets</th></tr>
 ${history.map(h => {
     return '<tr style="border-bottom:1px solid rgba(255,255,255,0.03)"><td style="padding:4px;color:var(--dim)">' + h.date.substring(5) + '</td>'
     + '<td>' + (h.dayUsers || '–') + '</td>'
     + '<td style="color:var(--gold)">' + (h.dayStreams || 0) + '</td>'
-    + '<td>' + busiestCell(h.date, h.dayStreams) + '</td>'
+    + '<td class="dim">' + (h.dayHeld || '–') + '</td>'
+    + '<td>' + busiestCell(h.date, h.dayStreams + (h.dayHeld || 0)) + '</td>'
     + '<td style="color:var(--gold)">' + (h.dayViews || 0) + '</td>'
     + '<td>' + (magnetsOn(h.date) == null ? '–' : fmt(magnetsOn(h.date))) + '</td>'
     + '<td style="color:var(--green)">' + (magnetsOn(h.date) == null ? '–' : '+' + fmt(newByDay[h.date] || 0)) + '</td></tr>';
@@ -3803,7 +3918,7 @@ ${history.map(h => {
 <div style="display:flex;align-items:center;gap:10px">
 <div style="width:10px;height:10px;border-radius:50%;background:var(--green);box-shadow:0 0 8px var(--green)"></div>
 <span style="font-size:14px;font-weight:600">Online</span>
-<span style="font-size:12px;color:var(--dim)">v2.7.2</span>
+<span style="font-size:12px;color:var(--dim)">v2.7.3</span>
 </div>
 <a href="https://stats.uptimerobot.com/w0wKhtFnIu" target="_blank" style="color:var(--gold);font-size:12px;text-decoration:none;font-family:'Chakra Petch',sans-serif">Full Status ↗</a>
 </div>
@@ -3845,7 +3960,7 @@ app.get('/logs', adminAuth, async (req, res) => {
     });
 });
 
-app.get('/health', (req, res) => res.json({ ok: true, version: '2.7.2', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
+app.get('/health', (req, res) => res.json({ ok: true, version: '2.7.3', index: idxStats(), catalogue: catalogue.size, providers: PROVIDERS.length }));
 
 // Last: an error Express raises itself (a path it cannot decode, "/%zz/manifest.json") or a route throws gets a plain
 // answer. Express's own page shows the stack trace with the server's file paths (B-033, v2.6.9).
@@ -3871,6 +3986,6 @@ if (!PROXY_API_KEY) console.warn('⚠️  PROXY_API_KEY not set — Zamunda prox
 if (!DASHBOARD_KEY) console.warn('⚠️  DASHBOARD_KEY not set — dashboard/logs are locked (fail-closed).');
 
 app.listen(PORT, () => {
-    console.log(`🍌 Zamunda BG addon v2.7.2 on port ${PORT}`);
+    console.log(`🍌 Zamunda BG addon v2.7.3 on port ${PORT}`);
     console.log(`Config: http://localhost:${PORT}/`);
 });
